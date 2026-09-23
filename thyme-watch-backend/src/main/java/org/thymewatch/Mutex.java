@@ -12,14 +12,17 @@ public class Mutex<T> {
             this.m = m;
         }
 
+        @SuppressWarnings("null")
         public T get() {
             return this.m.val;
         }
 
+        @SuppressWarnings("null")
         public void set(T val) {
             this.m.val = val;
         }
 
+        @SuppressWarnings("null")
         @Override
         public void close() {
             this.m.unlock();

@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { ref, useTemplateRef } from 'vue'
+import { onUnmounted, ref, useTemplateRef } from 'vue'
 import CountdownList, { type Countdown } from './CountdownList.vue'
+import { Connection } from './test.ts'
 
 const inputRef = useTemplateRef('input')
 const nameInputRef = useTemplateRef('name-input')
 const listRef = useTemplateRef('list')
 const countdowns = ref<{ countdowns: Countdown[] }>({ countdowns: [] })
+const conn = Connection.new(date => listRef.value?.pushCountdown({
+  expiryTimestamp: date,
+  startedAt: new Date()
+}));
 Notification.requestPermission()
 
 const onSubmit = () => {
@@ -23,6 +28,7 @@ const onSubmit = () => {
   })
 }
 
+
 const onExpired = async (countdown: Countdown) => {
   const title = countdown.name ? `Timer expired: ${countdown.name}` : 'Timer expired'
   if (Notification.permission === 'granted') {
@@ -31,6 +37,9 @@ const onExpired = async (countdown: Countdown) => {
     alert(title)
   }
 }
+onUnmounted(() => {
+  conn.then(c => c.close());
+})
 </script>
 
 <template>
