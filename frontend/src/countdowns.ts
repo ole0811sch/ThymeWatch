@@ -3,13 +3,18 @@ export interface CountdownInput {
   expiryTimestamp: Date
   name?: string
   id?: string
+  pausedAt?: Date
 }
 export interface Countdown extends CountdownInput {
   id: string
-  abortController: AbortController
+  originalExpiryTimestamp: Date
+  expired?: boolean
+}
+export interface CountdownPrivate extends Countdown {
+  timeoutId?: number
 }
 
-const countdowns: Map<string, Countdown> = new Map()
+const countdowns: Map<string, CountdownPrivate> = new Map()
 
 /**
  * @returns copy of countdowns map
@@ -18,27 +23,74 @@ export function getCountdowns(): Map<string, Countdown> {
   return new Map(countdowns)
 }
 
+/**
+ * Sets timeout that expires at cd.expiryTimestamp and emits the 'expired'
+ * event, and sets cd.timeoutId
+ */
+function startTimeout(cd: CountdownPrivate) {
+  cd.timeoutId = setTimeout(() => {
+    cd.expired = true
+    handler('expired', cd)
+  }, cd.expiryTimestamp.getTime() - Date.now())
+}
+
+/**
+ * Clears timeout associated with cd.timeoutId and sets the field to undefined
+ */
+function stopTimeout(cd: CountdownPrivate) {
+  clearTimeout(cd.timeoutId)
+  cd.timeoutId = undefined
+}
+
 export function addCountdown(cd: CountdownInput): Countdown {
-  const cdFull: Countdown = {
+  const cdFull: CountdownPrivate = {
     ...cd,
     id: crypto.randomUUID(),
-    abortController: new AbortController(),
+    originalExpiryTimestamp: cd.expiryTimestamp,
   }
-  cdFull.abortController.signal.addEventListener('abort', () => {
-    clearTimeout(timeoutId)
-    countdowns.delete(cdFull.id)
-    handler('cancelled', cdFull)
-    for (const type of countdownEventTypes) {
-      handlers[type].delete(cdFull.id)
-    }
-  })
   countdowns.set(cdFull.id, cdFull)
-  const timeoutId = setTimeout(
-    () => handler('expired', cdFull),
-    cdFull.expiryTimestamp.getTime() - Date.now(),
-  )
+  startTimeout(cdFull)
   handler('new', cdFull)
   return cdFull
+}
+
+export function removeCountdown(id: string): void {
+  const cd = countdowns.get(id)
+  if (!cd) {
+    return
+  }
+
+  stopTimeout(cd)
+  countdowns.delete(id)
+  handler('removed', cd)
+  for (const type of countdownEventTypes) {
+    handlers[type].delete(id)
+  }
+}
+
+export function pauseCountdown(id: string): void {
+  const cd = countdowns.get(id)
+  if (!cd || cd.timeoutId === undefined || cd.expired) {
+    return
+  }
+
+  cd.pausedAt = new Date()
+  stopTimeout(cd)
+  handler('paused', cd)
+}
+
+export function continueCountdown(id: string): void {
+  const cd = countdowns.get(id)
+  if (!cd || cd.timeoutId !== undefined || cd.pausedAt === undefined || cd.expired) {
+    return
+  }
+
+  cd.expiryTimestamp = new Date(
+    cd.expiryTimestamp.getTime() + Math.max(Date.now() - cd.pausedAt.getTime(), 0),
+  )
+  cd.pausedAt = undefined
+  startTimeout(cd)
+  handler('continued', cd)
 }
 
 function handler(type: CountdownEventType, cd: Countdown): void {
@@ -46,12 +98,11 @@ function handler(type: CountdownEventType, cd: Countdown): void {
   handlers[type].get(null)?.forEach((handler) => handler(cd))
 }
 
-const handlers: Record<CountdownEventType, Map<string | null, Set<(cd: Countdown) => void>>> = {
-  new: new Map(),
-  cancelled: new Map(),
-  expired: new Map(),
-}
-const countdownEventTypes = ['expired', 'new', 'cancelled'] as const
+const countdownEventTypes = ['expired', 'new', 'removed', 'paused', 'continued'] as const
+const handlers: Record<
+  CountdownEventType,
+  Map<string | null, Set<(cd: Countdown) => void>>
+> = Object.fromEntries(countdownEventTypes.map((type) => [type, new Map()])) as any
 type CountdownEventType = (typeof countdownEventTypes)[number]
 export const countdownEventTarget = {
   addEventListener(

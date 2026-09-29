@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, toRaw, toRefs, watch, watchSyncEffect, type Ref } from 'vue'
+import { onBeforeUnmount, ref, watchSyncEffect, type Ref } from 'vue'
 import TheCountdown from './TheCountdown.vue'
-import { countdownEventTarget, getCountdowns, type Countdown } from './countdowns.ts';
+import { countdownEventTarget, getCountdowns, type Countdown } from './countdowns.ts'
 
-const countdowns: Ref<Map<string, Countdown>> = ref(getCountdowns());
+const countdowns: Ref<Map<string, Countdown>> = ref(getCountdowns())
 const emit = defineEmits<{ expired: [Countdown] }>()
 /** only contains ids of countdowns in {@link countdownEls} */
-const countdownExpired = ref<Record<string, true>>({})
-const countdownEls = ref<Record<string, InstanceType<typeof TheCountdown>>>({})
+const countdownInactive = ref<Set<string>>(new Set())
+const countdownEls = ref<Map<string, InstanceType<typeof TheCountdown>>>(new Map())
 
 const visibilityChangeListenerAc = new AbortController()
 const isUnmounted = ref(false)
@@ -15,7 +15,7 @@ const documentVisibility = ref(true)
 let clockCallbackId: number | null = null
 
 function clock() {
-  Object.values(countdownEls.value).forEach((cd) => cd.update())
+  countdownEls.value.forEach((cd) => cd.update())
   const now = Date.now()
   const nextSecond = Math.ceil(now / 1000) * 1000
   clockCallbackId = setTimeout(clock, nextSecond - now)
@@ -35,7 +35,7 @@ watchSyncEffect(() => {
   const clockShouldRun =
     documentVisibility.value &&
     !isUnmounted.value &&
-    Object.values(countdownExpired.value).length < Object.values(countdownEls.value).length
+    countdownInactive.value.size < countdownEls.value.size
   if (clockCallbackId === null) {
     if (clockShouldRun) {
       clock()
@@ -48,43 +48,55 @@ watchSyncEffect(() => {
   }
 })
 
-const onRequestRemove = (id: string) => {
-  countdowns.value.get(id)?.abortController.abort();
-}
-
-const onCountdownCancel = (cd: Countdown) => {
-  delete countdownExpired.value[cd.id]
+const onCountdownRemoved = (cd: Countdown) => {
+  countdownInactive.value.delete(cd.id)
   countdowns.value.delete(cd.id)
 }
-countdownEventTarget.addEventListener("cancelled", onCountdownCancel)
+countdownEventTarget.addEventListener('removed', onCountdownRemoved)
 const onNewCountdown = (cd: Countdown) => {
   countdowns.value.set(cd.id, cd)
 }
-countdownEventTarget.addEventListener("new", onNewCountdown)
+countdownEventTarget.addEventListener('new', onNewCountdown)
 const onCountdownExpired = async (countdown: Countdown) => {
-  countdownExpired.value[countdown.id] = true
-  countdownEls.value[countdown.id]?.update()
+  countdownInactive.value.add(countdown.id)
+  countdownEls.value.get(countdown.id)?.update()
   emit('expired', countdown)
 }
-countdownEventTarget.addEventListener("expired", onCountdownExpired)
-
+countdownEventTarget.addEventListener('expired', onCountdownExpired)
+const onCountdownPaused = async (countdown: Countdown) => {
+  countdownInactive.value.add(countdown.id)
+  countdownEls.value.get(countdown.id)?.update()
+}
+countdownEventTarget.addEventListener('paused', onCountdownPaused)
+const onCountdownContinued = async (countdown: Countdown) => {
+  countdownInactive.value.delete(countdown.id)
+  countdownEls.value.get(countdown.id)?.update()
+}
+countdownEventTarget.addEventListener('continued', onCountdownContinued)
 
 onBeforeUnmount(() => {
   isUnmounted.value = true
   visibilityChangeListenerAc.abort()
-  countdownEventTarget.removeEventListener("cancelled", onCountdownCancel)
-  countdownEventTarget.removeEventListener("new", onNewCountdown)
-  countdownEventTarget.removeEventListener("expired", onCountdownExpired)
+  countdownEventTarget.removeEventListener('removed', onCountdownRemoved)
+  countdownEventTarget.removeEventListener('new', onNewCountdown)
+  countdownEventTarget.removeEventListener('expired', onCountdownExpired)
+  countdownEventTarget.addEventListener('continued', onCountdownContinued)
+  countdownEventTarget.addEventListener('paused', onCountdownPaused)
 })
 </script>
 
 <template>
-  <TheCountdown :countdown @request-remove="onRequestRemove(countdown.id ?? '')" v-for="[id, countdown] in countdowns"
-    :key="id" :ref="(cd) => {
-        if (cd === null) delete countdownEls[id]
-        else countdownEls[id] = cd as any
+  <TheCountdown
+    :countdown
+    v-for="[id, countdown] in countdowns"
+    :key="id"
+    :ref="
+      (cd) => {
+        if (cd === null) countdownEls.delete(id)
+        else countdownEls.set(id, cd as any)
       }
-      " />
+    "
+  />
 </template>
 
 <style scoped></style>
