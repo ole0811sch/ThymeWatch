@@ -2,8 +2,8 @@
 import { useTemplateRef } from 'vue'
 import CountdownList from './CountdownList.vue'
 import { addCountdown } from './countdowns.ts'
-import { audio, isPlaying } from './audio.ts'
-import { closeAllNotifications } from './notifs.ts'
+import { notifs } from './notifs.ts'
+import DismissModal from './DismissModal.vue'
 
 const inputRef = useTemplateRef('input')
 const nameInputRef = useTemplateRef('name-input')
@@ -26,23 +26,13 @@ const onSubmit = () => {
 </script>
 
 <template>
-  <button
-    v-if="isPlaying"
-    @click="
-      () => {
-        audio.stop()
-        closeAllNotifications()
-      }
-    "
-  >
-    Dismiss
-  </button>
   <form @submit.prevent="onSubmit">
     <input type="text" ref="name-input" placeholder="Name" />
     <input type="text" ref="input" placeholder="Time" />
     <button>Submit</button>
   </form>
   <CountdownList ref="list" />
+  <DismissModal v-if="notifs.size > 0"></DismissModal>
 </template>
 
 <style scoped></style>
