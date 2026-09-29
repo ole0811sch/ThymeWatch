@@ -14,6 +14,7 @@ import org.glassfish.grizzly.http.server.HttpServer;
 import org.glassfish.grizzly.http.server.Request;
 import org.glassfish.grizzly.http.server.Response;
 import org.glassfish.grizzly.http.util.HttpStatus;
+import org.glassfish.grizzly.utils.Charsets;
 import org.glassfish.tyrus.server.Server;
 import org.jspecify.annotations.Nullable;
 
@@ -57,7 +58,9 @@ public class App {
             server.start();
 
             HttpServer httpServer = HttpServer.createSimpleServer(null, "127.0.0.1", HTTP_PORT);
-            httpServer.getServerConfiguration().addHttpHandler(
+            var config = httpServer.getServerConfiguration();
+            config.setDefaultQueryEncoding(Charsets.UTF8_CHARSET);
+            config.addHttpHandler(
                     new HttpHandler() {
                         public void service(@SuppressWarnings("null") Request request,
                                 @SuppressWarnings("null") Response response) throws Exception {
