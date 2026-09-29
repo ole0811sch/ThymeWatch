@@ -1,7 +1,6 @@
 package org.thymewatch;
 
 import java.io.IOException;
-import java.math.BigInteger;
 
 import jakarta.websocket.EncodeException;
 import jakarta.websocket.Session;
@@ -38,7 +37,7 @@ public abstract class Message {
         Double time;
 
         /**
-         * @param time Seconds since epoch
+         * @param time Ms since epoch
          */
         public SetAlarmMessage(PartialMessage part, Double time) {
             super(Type.SET_ALARM, part);

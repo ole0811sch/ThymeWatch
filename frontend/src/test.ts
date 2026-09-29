@@ -80,7 +80,7 @@ export class Connection {
     }
     switch (tuple[0]) {
       case 'SET_ALARM':
-        this.onSetAlarm(new Date((obj.time as number) * 1000))
+        this.onSetAlarm(new Date(obj.time as number))
         this.sendMessage('OK_RESPONSE', { inResponseTo: obj.id })
         break
       default:

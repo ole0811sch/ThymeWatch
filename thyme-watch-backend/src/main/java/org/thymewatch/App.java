@@ -3,24 +3,16 @@ package org.thymewatch;
 import jakarta.websocket.server.ServerEndpoint;
 
 import java.io.IOException;
-import java.math.BigInteger;
-import java.text.SimpleDateFormat;
-import java.time.Instant;
-import java.util.Date;
-import java.util.Locale;
-import java.util.Scanner;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 import org.glassfish.grizzly.http.Method;
 import org.glassfish.grizzly.http.server.HttpHandler;
 import org.glassfish.grizzly.http.server.HttpServer;
 import org.glassfish.grizzly.http.server.Request;
 import org.glassfish.grizzly.http.server.Response;
-import org.glassfish.grizzly.http.server.TimeoutHandler;
 import org.glassfish.grizzly.http.util.HttpStatus;
 import org.glassfish.tyrus.server.Server;
 import org.jspecify.annotations.Nullable;
@@ -75,10 +67,10 @@ public class App {
                                 if (!request.getMethod().equals(Method.POST)) {
                                     response.setStatus(HttpStatus.METHOD_NOT_ALLOWED_405);
                                 }
-                                var secsSinceEpochStr = request.getParameter("expirytime");
-                                double secsSinceEpoch;
+                                var msSinceEpochStr = request.getParameter("expirytime");
+                                double msSinceEpoch;
                                 try {
-                                    secsSinceEpoch = Double.parseDouble(secsSinceEpochStr);
+                                    msSinceEpoch = Double.parseDouble(msSinceEpochStr);
                                 } catch (NumberFormatException e) {
                                     response.setStatus(HttpStatus.BAD_REQUEST_400);
                                     response.getWriter().write("expirytime");
@@ -91,7 +83,7 @@ public class App {
                                     response2.resume();
                                     return true;
                                 });
-                                var couldRequest = setAlarm(secsSinceEpoch,
+                                var couldRequest = setAlarm(msSinceEpoch,
                                         (session, message) -> {
                                             System.out.println("Response");
                                             System.out.println(message);
@@ -112,13 +104,6 @@ public class App {
                             } else {
                                 response.setStatus(HttpStatus.NOT_FOUND_404);
                             }
-                            // final SimpleDateFormat format = new SimpleDateFormat("EEE, dd MMM yyyy
-                            // HH:mm:ss zzz",
-                            // Locale.US);
-                            // final String date = format.format(new Date(System.currentTimeMillis()));
-                            // response.setContentType("text/plain");
-                            // response.setContentLength(date.length());
-                            // response.getWriter().write(date);
                         }
                     });
             try {
@@ -138,7 +123,7 @@ public class App {
 
     }
 
-    public static boolean setAlarm(Double secsSinceEpoch, BiConsumer<Session, Message> callback) {
+    public static boolean setAlarm(Double msSinceEpoch, BiConsumer<Session, Message> callback) {
         var didSetCounter = new boolean[] { false };
         synchronized (sessionDataMap) {
             if (sessionDataMap.size() == 0) {
@@ -149,7 +134,7 @@ public class App {
                 try (var guard = dataMap.lock()) {
                     var session = guard.get().session;
                     System.out.println("Locked");
-                    sendMessage(session, new SetAlarmMessage(new PartialMessage(-1, session), secsSinceEpoch),
+                    sendMessage(session, new SetAlarmMessage(new PartialMessage(-1, session), msSinceEpoch),
                             (session2, response) -> {
                                 System.out.println("responded");
                                 if (!didSetCounter[0]) {
