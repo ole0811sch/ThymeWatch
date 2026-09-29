@@ -25,7 +25,9 @@ const onExpired = async (countdown: Countdown) => {
   const title = countdown.name ? `Timer expired: ${countdown.name}` : 'Timer expired'
   await audio.start()
   if (Notification.permission === 'granted') {
-    const notif = newNotification(title)
+    const notif = newNotification(countdown, title, {
+      requireInteraction: true,
+    })
     notif.addEventListener('close', (e) => {
       audio.stop()
     })
