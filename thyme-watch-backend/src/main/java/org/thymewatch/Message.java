@@ -35,12 +35,12 @@ public abstract class Message {
     }
 
     public static class SetAlarmMessage extends Message {
-        BigInteger time;
+        Double time;
 
         /**
-         * @param time Milliseconds since epoch
+         * @param time Seconds since epoch
          */
-        public SetAlarmMessage(PartialMessage part, BigInteger time) {
+        public SetAlarmMessage(PartialMessage part, Double time) {
             super(Type.SET_ALARM, part);
             this.time = time;
         }

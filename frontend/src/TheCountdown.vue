@@ -1,63 +1,54 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import type { Countdown } from './CountdownList.vue'
-
-const props = defineProps<{ countdown: Countdown }>()
-const emit = defineEmits<{ requestRemove: []; expired: [Countdown] }>()
+import { onUnmounted, ref } from 'vue'
+import { countdownEventTarget, type Countdown } from './countdowns';
+const { countdown } = defineProps<{ countdown: Countdown }>()
+const emit = defineEmits<{ requestRemove: []; }>()
 
 const displayText = ref('')
 
 function update() {
-  if (!props.countdown.expiryTimestamp) {
+  if (!countdown.expiryTimestamp) {
     displayText.value = ''
     return
   }
-  const timeLeft = Math.max(props.countdown.expiryTimestamp.getTime() - Date.now(), 0)
+  const timeLeft = Math.max(countdown.expiryTimestamp.getTime() - Date.now(), 0)
   const secondsLeft = Math.round(timeLeft / 1000)
   const minutesLeft = Math.floor(secondsLeft / 60)
   const hoursLeft = Math.floor(minutesLeft / 60)
   const secondsField = secondsLeft % 60
   const minutesField = minutesLeft % 60
-  displayText.value = `${String(hoursLeft).padStart(2, '0')}:${String(minutesField).padStart(2, '0')}:${String(secondsField).padStart(2, '0')}`
+  const hoursText = hoursLeft ? `${String(hoursLeft).padStart(2, '0')}:` : ''
+  displayText.value = `${hoursText}${String(minutesField).padStart(2, '0')}:${String(secondsField).padStart(2, '0')}`
 }
 
-const onExpired = () => {
-  unwatchExpiryTimestamp()
-  emit('expired', props.countdown)
+const onExpired = (_cd: Countdown) => {
+  update();
 }
-let callbackId: null | number = null
-const unwatchExpiryTimestamp = watch(
-  () => props.countdown.expiryTimestamp,
-  (value) => {
-    if (callbackId !== null) {
-      clearTimeout(callbackId)
-      callbackId = null
-    }
-    if (value !== null) {
-      callbackId = setTimeout(onExpired, value.getTime() - Date.now())
-    }
-  },
-  { immediate: true },
-)
+countdownEventTarget.addEventListener("expired", onExpired, { countdownId: countdown.id })
+onUnmounted(() => {
+  countdownEventTarget.removeEventListener("expired", onExpired, { countdownId: countdown.id })
+})
+
 update()
 
 defineExpose({ update })
 </script>
+
 <template>
   <div style="display: flex; align-items: start">
     <span>{{ displayText }}</span>
     <button @click="$emit('requestRemove')">Remove</button>
     <details :style="{ display: 'inline' }">
       <summary>Show details</summary>
-      <div v-if="props.countdown.name">Name: {{ props.countdown.name }}</div>
-      <div>Started at {{ props.countdown.startedAt.toLocaleTimeString() }}</div>
-      <div>Expiry at {{ props.countdown.expiryTimestamp.toLocaleTimeString() }}</div>
+      <div v-if="countdown.name">Name: {{ countdown.name }}</div>
+      <div>Started at {{ countdown.startedAt.toLocaleTimeString() }}</div>
+      <div>Expiry at {{ countdown.expiryTimestamp.toLocaleTimeString() }}</div>
     </details>
   </div>
 </template>
 
 <style lang="css" scoped>
-div * + * {
+div *+* {
   margin-left: 0.2em;
 }
 </style>

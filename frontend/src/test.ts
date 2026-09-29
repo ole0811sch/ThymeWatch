@@ -80,7 +80,7 @@ export class Connection {
     }
     switch (tuple[0]) {
       case 'SET_ALARM':
-        this.onSetAlarm(new Date(obj.time as number))
+        this.onSetAlarm(new Date((obj.time as number) * 1000))
         this.sendMessage('OK_RESPONSE', { inResponseTo: obj.id })
         break
       default:
@@ -88,7 +88,7 @@ export class Connection {
     }
   }
 
-  static async new(onSetAlarm: (date: Date) => void): Promise<Connection> {
+  static new(onSetAlarm: (date: Date) => void): Promise<Connection> {
     // Creates a new WebSocket connection to the specified URL.
     const socket = new WebSocket('ws://localhost:8090/')
     const promises = new Map<number, (response: [Tag, Message]) => void>()
@@ -98,7 +98,6 @@ export class Connection {
     const prom = new Promise<void>((res_) => (res = res_))
     // Executes when the connection is successfully established.
     socket.addEventListener('open', async (event) => res())
-    socket.addEventListener('open', async (event) => {})
     // Listen for messages and executes when a message is received from the server.
     socket.addEventListener('message', (event) => c.handleMessage(event))
     // Executes when the connection is closed, providing the close code and reason.
@@ -109,6 +108,6 @@ export class Connection {
     socket.addEventListener('error', (error) => {
       console.error('WebSocket error:', error)
     })
-    return c
+    return prom.then((_) => c)
   }
 }
