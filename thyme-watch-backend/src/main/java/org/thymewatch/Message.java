@@ -2,6 +2,8 @@ package org.thymewatch;
 
 import java.io.IOException;
 
+import org.jspecify.annotations.Nullable;
+
 import jakarta.websocket.EncodeException;
 import jakarta.websocket.Session;
 
@@ -35,13 +37,15 @@ public abstract class Message {
 
     public static class SetAlarmMessage extends Message {
         Double time;
+        @Nullable String name;
 
         /**
          * @param time Ms since epoch
          */
-        public SetAlarmMessage(PartialMessage part, Double time) {
+        public SetAlarmMessage(PartialMessage part, Double time, @Nullable String name) {
             super(Type.SET_ALARM, part);
             this.time = time;
+            this.name = name;
         }
     }
 

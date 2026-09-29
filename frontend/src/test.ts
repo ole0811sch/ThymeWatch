@@ -21,7 +21,7 @@ export class Connection {
   private constructor(
     private socket: WebSocket,
     private promises: Map<number, (response: [Tag, Message]) => void>,
-    private onSetAlarm: (date: Date) => void,
+    private onSetAlarm: (date: Date, name: string | undefined) => void,
   ) {}
 
   sendMessage(tag: Tag, obj: PartialMessage) {
@@ -80,7 +80,11 @@ export class Connection {
     }
     switch (tuple[0]) {
       case 'SET_ALARM':
-        this.onSetAlarm(new Date(obj.time as number))
+        if (obj.name !== undefined && typeof obj.name !== 'string') {
+          this.sendMessage('ERROR', { message: 'Invalid type of field `name`' })
+          break
+        }
+        this.onSetAlarm(new Date(obj.time as number), obj.name)
         this.sendMessage('OK_RESPONSE', { inResponseTo: obj.id })
         break
       default:
@@ -88,7 +92,9 @@ export class Connection {
     }
   }
 
-  static new(onSetAlarm: (date: Date) => void): Promise<Connection> {
+  static async new(
+    onSetAlarm: (date: Date, name: string | undefined) => void,
+  ): Promise<Connection> {
     // Creates a new WebSocket connection to the specified URL.
     const socket = new WebSocket('ws://localhost:8090/')
     const promises = new Map<number, (response: [Tag, Message]) => void>()
@@ -108,6 +114,7 @@ export class Connection {
     socket.addEventListener('error', (error) => {
       console.error('WebSocket error:', error)
     })
-    return prom.then((_) => c)
+    await prom
+    return c
   }
 }

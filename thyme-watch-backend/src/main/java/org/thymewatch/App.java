@@ -47,7 +47,6 @@ public class App {
     public static class Configurator extends ServerEndpointConfig.Configurator {
         @Override
         public boolean checkOrigin(@Nullable String originHeaderValue) {
-            System.out.println("Origin: " + originHeaderValue);
             return originHeaderValue == null || originHeaderValue.equals(ORIGIN);
         }
     }
@@ -62,7 +61,6 @@ public class App {
                     new HttpHandler() {
                         public void service(@SuppressWarnings("null") Request request,
                                 @SuppressWarnings("null") Response response) throws Exception {
-                            System.out.println(request.getHttpHandlerPath());
                             if (request.getHttpHandlerPath().equals("/alarm")) {
                                 if (!request.getMethod().equals(Method.POST)) {
                                     response.setStatus(HttpStatus.METHOD_NOT_ALLOWED_405);
@@ -76,27 +74,25 @@ public class App {
                                     response.getWriter().write("expirytime");
                                     return;
                                 }
-                                System.out.println("1");
                                 response.suspend(5, TimeUnit.SECONDS, null, response2 -> {
-                                    System.out.println("timeout");
                                     response2.setStatus(HttpStatus.GATEWAY_TIMEOUT_504);
                                     response2.resume();
                                     return true;
                                 });
+                                @Nullable String alarmName = request.getParameter("name");
                                 var couldRequest = setAlarm(msSinceEpoch,
+                                    alarmName,
                                         (session, message) -> {
-                                            System.out.println("Response");
-                                            System.out.println(message);
                                             if (message instanceof OkResponseMessage) {
                                                 response.setStatus(HttpStatus.OK_200);
                                                 response.resume();
                                             } else {
+                                                System.out.println("Unexpected response to SET_ALARM: " + message);
                                                 response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR_500);
                                                 response.resume();
                                             }
                                         });
                                 if (!couldRequest) {
-                                    System.out.println("unavailable");
                                     response.setStatus(HttpStatus.SERVICE_UNAVAILABLE_503);
                                     response.resume();
                                     return;
@@ -123,22 +119,18 @@ public class App {
 
     }
 
-    public static boolean setAlarm(Double msSinceEpoch, BiConsumer<Session, Message> callback) {
+    public static boolean setAlarm(Double msSinceEpoch, @Nullable String name, BiConsumer<Session, Message> callback) {
         var didSetCounter = new boolean[] { false };
         synchronized (sessionDataMap) {
             if (sessionDataMap.size() == 0) {
                 return false;
             }
             for (var dataMap : sessionDataMap.values()) {
-                System.out.println("Lock");
                 try (var guard = dataMap.lock()) {
                     var session = guard.get().session;
-                    System.out.println("Locked");
-                    sendMessage(session, new SetAlarmMessage(new PartialMessage(-1, session), msSinceEpoch),
+                    sendMessage(session, new SetAlarmMessage(new PartialMessage(-1, session), msSinceEpoch, name),
                             (session2, response) -> {
-                                System.out.println("responded");
                                 if (!didSetCounter[0]) {
-                                    System.out.println("first");
                                     callback.accept(session2, response);
                                     didSetCounter[0] = true;
                                 }

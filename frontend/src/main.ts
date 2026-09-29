@@ -11,10 +11,11 @@ app.use(router)
 app.mount('#app')
 
 Notification.requestPermission()
-const conn = Connection.new((date) =>
+const conn = Connection.new((date, name) =>
   addCountdown({
     expiryTimestamp: date,
     startedAt: new Date(),
+    name,
   }),
 )
 
