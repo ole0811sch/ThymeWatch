@@ -78,7 +78,7 @@ defineExpose({ update })
       <div v-if="!isPaused">Expiry at {{ countdown.expiryTimestamp.toLocaleTimeString() }}</div>
       <div
         v-if="
-          countdown.originalExpiryTimestamp.getTime() !== countdown.expiryTimestamp.getTime()
+          isPaused || countdown.originalExpiryTimestamp.getTime() !== countdown.expiryTimestamp.getTime()
         "
       >
         Initial expiry at
