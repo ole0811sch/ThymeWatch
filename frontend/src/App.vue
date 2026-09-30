@@ -1,24 +1,24 @@
 <script setup lang="ts">
-import { useTemplateRef } from 'vue'
+import { computed, ref, useTemplateRef, type Ref } from 'vue'
 import CountdownList from './CountdownList.vue'
 import { addCountdown } from './countdowns.ts'
 import { notifs } from './notifs.ts'
 import DismissModal from './DismissModal.vue'
 
-const inputRef = useTemplateRef('input')
 const nameInputRef = useTemplateRef('name-input')
 const listRef = useTemplateRef('list')
+const dateInput: Ref<string> = ref("");
+const dateInputAsDate = computed(() => new Date(dateInput.value))
 
 const onSubmit = () => {
-  if (inputRef.value === null || listRef.value === null || nameInputRef.value === null) {
+  if (listRef.value === null || nameInputRef.value === null) {
     return
   }
-  const date = new Date(inputRef.value.value)
-  if (Number.isNaN(date.getTime())) {
+  if (Number.isNaN(dateInputAsDate.value.getTime())) {
     return
   }
   addCountdown({
-    expiryTimestamp: date,
+    expiryTimestamp: dateInputAsDate.value,
     startedAt: new Date(),
     name: nameInputRef.value.value || undefined,
   })
@@ -29,8 +29,8 @@ const onSubmit = () => {
   <form @submit.prevent="onSubmit" style="display: flex; align-items: center;">
     <span style="margin-right: 1em;">Add Alarm:</span>
     <input type="text" ref="name-input" placeholder="Name" />
-    <input type="text" ref="input" placeholder="Time" />
-    <button>Submit</button>
+    <input type="text" ref="input" placeholder="Time" v-model="dateInput" />
+    <button :disabled="isNaN(dateInputAsDate.getTime())">Submit</button>
   </form>
   <CountdownList ref="list" />
   <DismissModal v-if="notifs.size > 0"></DismissModal>
