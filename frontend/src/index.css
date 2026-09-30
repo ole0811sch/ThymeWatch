@@ -21,6 +21,7 @@
   --button-bg-color: var(--color-accent-light);
   --button-bg-color-hover: var(--color-accent-dark);
   --button-bg-color-active: var(--color-accent-darker);
+  --button-bg-color-disabled: var(--color-secondary);
   --border-color: var(--color-text);
   --border-style: solid;
   --border-width: 1px;
@@ -59,11 +60,15 @@ button {
   color: var(--color-text);
   user-select: none;
 }
-button:hover:not(:active) {
+button:hover:not(:active, :hover) {
   background-color: var(--button-bg-color-hover);
 }
 button:active {
   background-color: var(--button-bg-color-active);
+}
+button:disabled {
+  background-color: var(--button-bg-color-disabled);
+  color: var(--color-text-tertiary);
 }
 
 input[type='text'] {
