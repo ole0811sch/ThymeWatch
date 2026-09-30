@@ -12,6 +12,9 @@ const countdownEls = ref<Map<string, InstanceType<typeof TheCountdown>>>(new Map
 const visibilityChangeListenerAc = new AbortController()
 const isUnmounted = ref(false)
 const documentVisibility = ref(true)
+
+const detailsName = String(Math.random())
+
 let clockCallbackId: number | null = null
 
 function clock() {
@@ -87,6 +90,7 @@ onBeforeUnmount(() => {
 
 <template>
   <TheCountdown
+    :details-name="detailsName"
     :countdown
     v-for="[id, countdown] in countdowns"
     :key="id"
