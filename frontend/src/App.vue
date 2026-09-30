@@ -26,7 +26,8 @@ const onSubmit = () => {
 </script>
 
 <template>
-  <form @submit.prevent="onSubmit">
+  <form @submit.prevent="onSubmit" style="display: flex; align-items: center;">
+    <span style="margin-right: 1em;">Add Alarm:</span>
     <input type="text" ref="name-input" placeholder="Name" />
     <input type="text" ref="input" placeholder="Time" />
     <button>Submit</button>
@@ -35,4 +36,8 @@ const onSubmit = () => {
   <DismissModal v-if="notifs.size > 0"></DismissModal>
 </template>
 
-<style scoped></style>
+<style scoped>
+form > * + * {
+  margin-left: 0.2em;
+}
+</style>

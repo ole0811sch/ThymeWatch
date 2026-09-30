@@ -1,0 +1,82 @@
+:root {
+  --color-primary: #eee;
+  --color-secondary: #ccc;
+  --color-accent-light: hsl(120deg 50% 80%);
+  --color-accent-dark: hsl(120deg 45% 75%);
+  --color-accent-darker: hsl(120deg 40% 70%);
+  --color-contrast: hsl(300deg 45% 80%);
+  --color-text: #111;
+  --color-text-secondary: #555;
+  --color-text-tertiary: #777;
+  --color-timer-paused: hsl(211, 71%, 81%);
+
+  --font-size-small: 0.85rem;
+  --font-size-normal: 1rem;
+  --font-size-big: 1.2rem;
+  --font-size-bigger: 1.6rem;
+  --font-size-huge: 1.6rem;
+
+  font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
+
+  --button-bg-color: var(--color-accent-light);
+  --button-bg-color-hover: var(--color-accent-dark);
+  --button-bg-color-active: var(--color-accent-darker);
+  --border-color: var(--color-text);
+  --border-style: solid;
+  --border-width: 1px;
+  --border-radius-smaller: 0.3em;
+  --border-radius-small: 1em;
+  --box-padding: 0.2em 0.5em;
+  --box-shadow: 0px 0px 2px 1px grey;
+
+  color: var(--color-text);
+  background-color: var(--color-primary);
+  border-color: var(--border-color);
+  border-width: var(--border-width);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-primary: #111;
+    --color-secondary: #333;
+    --color-accent-light: hsl(120deg 50% 20%);
+    --color-accent-dark: hsl(120deg 45% 25%);
+    --color-accent-darker: hsl(120deg 40% 30%);
+    --color-contrast: hsl(300deg 45% 20%);
+    --color-text: #eee;
+    --color-text-secondary: #bbb;
+    --color-text-tertiary: #999;
+    --color-timer-paused: hsl(211, 71%, 19%);
+  }
+}
+
+button {
+  background-color: var(--button-bg-color);
+  border-style: none;
+  padding: var(--box-padding);
+  font-size: var(--font-size-big);
+  border-radius: 50vmin;
+  color: var(--color-text);
+  user-select: none;
+}
+button:hover:not(:active) {
+  background-color: var(--button-bg-color-hover);
+}
+button:active {
+  background-color: var(--button-bg-color-active);
+}
+
+input[type='text'] {
+  background-color: var(--color-secondary);
+  color: var(--color-text);
+  border-radius: 50vmin;
+  border-style: var(--border-style);
+  padding: var(--box-padding);
+  border-color: var(--border-color);
+  border-width: var(--border-width);
+  user-select: none;
+}
+
+input::placeholder {
+  color: var(--color-text-tertiary);
+}

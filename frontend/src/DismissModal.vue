@@ -11,7 +11,7 @@ import { audio } from './audio'
       top: 0;
       right: 0;
       bottom: 0;
-      background-color: rgba(0, 0, 0, 0.4);
+      background-color: hsl(from var(--color-text) h s l / 0.3);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -22,10 +22,13 @@ import { audio } from './audio'
         position: absolute;
         margin-left: auto;
         margin-right: auto;
-        background-color: white;
+        background-color: var(--color-primary);
         width: 40em;
         height: 20em;
         padding: 0 1em;
+        border-style: none;
+        border-radius: var(--border-radius-small);
+        box-shadow: 0px 0px 3px 0px var(--color-primary);
       "
     >
       <h1>Expired alarms</h1>

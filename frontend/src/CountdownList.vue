@@ -96,6 +96,7 @@ onBeforeUnmount(() => {
         else countdownEls.set(id, cd as any)
       }
     "
+    style="margin: 0.5em 0"
   />
 </template>
 

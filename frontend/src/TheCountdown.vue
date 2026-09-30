@@ -67,10 +67,14 @@ defineExpose({ update })
 </script>
 
 <template>
-  <div style="display: flex; align-items: start">
-    <span>{{ displayText }}</span>
+  <div style="display: flex; align-items: center">
+    <div :class="[...(isExpired ? ['expired'] : isPaused ? ['paused'] : []), 'timer']">
+      {{ displayText }}
+    </div>
     <button @click="onRequestRemove">Remove</button>
-    <button @click="onRequestTogglePause" v-if="!isExpired">{{ isPaused ? 'Continue' : 'Pause' }}</button>
+    <button @click="onRequestTogglePause" v-if="!isExpired">
+      {{ isPaused ? 'Continue' : 'Pause' }}
+    </button>
     <details :style="{ display: 'inline' }">
       <summary>Show details</summary>
       <div v-if="countdown.name">Name: {{ countdown.name }}</div>
@@ -78,7 +82,8 @@ defineExpose({ update })
       <div v-if="!isPaused">Expiry at {{ countdown.expiryTimestamp.toLocaleTimeString() }}</div>
       <div
         v-if="
-          isPaused || countdown.originalExpiryTimestamp.getTime() !== countdown.expiryTimestamp.getTime()
+          isPaused ||
+          countdown.originalExpiryTimestamp.getTime() !== countdown.expiryTimestamp.getTime()
         "
       >
         Initial expiry at
@@ -91,5 +96,19 @@ defineExpose({ update })
 <style lang="css" scoped>
 div * + * {
   margin-left: 0.2em;
+}
+.timer {
+  font-size: var(--font-size-big);
+  background-color: var(--color-secondary);
+  border-radius: var(--border-radius-smaller);
+  padding: var(--box-padding);
+}
+
+.timer.expired {
+  background-color: var(--color-contrast);
+}
+
+.timer.paused {
+  background-color: var(--color-timer-paused);
 }
 </style>
