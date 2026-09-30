@@ -60,7 +60,7 @@ button {
   color: var(--color-text);
   user-select: none;
 }
-button:hover:not(:active, :hover) {
+button:hover:not(:active, :disabled) {
   background-color: var(--button-bg-color-hover);
 }
 button:active {
