@@ -13,6 +13,7 @@ function init() {
   if (!(el instanceof HTMLMediaElement)) {
     return
   }
+  el.volume = 0.4
   isInited = true
   audioEl = el
 }
