@@ -7,7 +7,7 @@ import {
   pauseCountdown,
   type Countdown,
 } from './countdowns'
-const { countdown, detailsName } = defineProps<{ countdown: Countdown, detailsName: string }>()
+const { countdown, detailsName } = defineProps<{ countdown: Countdown; detailsName: string }>()
 
 const displayText = ref('')
 const isPaused = ref(countdown.pausedAt !== undefined)
@@ -77,7 +77,7 @@ defineExpose({ update })
       {{ isPaused ? 'Continue' : 'Pause' }}
     </button>
     <details style="display: inline" ref="details" :name="detailsName">
-      <summary style="cursor: pointer">Show details</summary>
+      <summary style="cursor: pointer"><span style="user-select: none">Show details</span></summary>
       <div style="position: relative">
         <div
           style="
@@ -116,6 +116,7 @@ div.main > * + * {
   background-color: var(--color-secondary);
   border-radius: var(--border-radius-smaller);
   padding: var(--box-padding);
+  user-select: none;
 }
 
 .timer.expired {

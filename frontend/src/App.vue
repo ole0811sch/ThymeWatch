@@ -27,7 +27,7 @@ const onSubmit = () => {
 
 <template>
   <form @submit.prevent="onSubmit" style="display: flex; align-items: center;">
-    <span style="margin-right: 1em;">Add Alarm:</span>
+    <span style="margin-right: 1em; user-select: none;">Add Alarm:</span>
     <input type="text" ref="name-input" placeholder="Name" />
     <input type="text" ref="input" placeholder="Time" v-model="dateInput" />
     <button :disabled="isNaN(dateInputAsDate.getTime())">Submit</button>
