@@ -5,6 +5,7 @@
   --color-accent-dark: hsl(120deg 45% 75%);
   --color-accent-darker: hsl(120deg 40% 70%);
   --color-contrast: hsl(300deg 45% 80%);
+  --color-contrast-intense: hsl(300deg 85% 50%);
   --color-text: #111;
   --color-text-secondary: #555;
   --color-text-tertiary: #777;
@@ -44,6 +45,7 @@
     --color-accent-dark: hsl(120deg 45% 25%);
     --color-accent-darker: hsl(120deg 40% 30%);
     --color-contrast: hsl(300deg 45% 20%);
+    --color-contrast-intense: hsl(300deg 85% 50%);
     --color-text: #eee;
     --color-text-secondary: #bbb;
     --color-text-tertiary: #999;
@@ -84,4 +86,12 @@ input[type='text'] {
 
 input::placeholder {
   color: var(--color-text-tertiary);
+}
+
+:focus:focus:focus {
+  border-style: none;
+  outline-width: 2px;
+  outline-color: var(--color-contrast-intense);
+  outline-offset: 0;
+  outline-style: solid;
 }
