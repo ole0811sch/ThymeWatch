@@ -28,9 +28,11 @@ const onExpired = async (countdown: Countdown) => {
     const notif = newNotification(countdown, title, {
       requireInteraction: true,
     })
-    notif.addEventListener('close', (e) => {
-      audio.stop()
-    })
+    for (const type of ['close', 'click']) {
+      notif.addEventListener(type, (e) => {
+        audio.stop()
+      })
+    }
   } else {
     alert(title)
     audio.stop()

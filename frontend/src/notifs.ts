@@ -15,7 +15,9 @@ export function newNotification(
 ): Notification {
   const notif = new Notification(...args)
   notifs.value.set(countdown.id, { notif, countdown })
-  notif.addEventListener('close', () => notifs.value.delete(countdown.id))
+  for (const type of ['close', 'click']) {
+    notif.addEventListener(type, () => notifs.value.delete(countdown.id))
+  }
   return notif
 }
 
