@@ -88,7 +88,7 @@ input::placeholder {
   color: var(--color-text-tertiary);
 }
 
-:focus:focus:focus {
+:focus-visible:focus-visible:focus-visible {
   border-style: none;
   outline-width: 2px;
   outline-color: var(--color-contrast-intense);
