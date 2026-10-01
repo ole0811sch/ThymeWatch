@@ -11,6 +11,7 @@ export interface Countdown extends CountdownInput {
   expired?: boolean
 }
 export interface CountdownPrivate extends Countdown {
+  /** May change */
   timeoutId?: number
 }
 
@@ -24,14 +25,38 @@ export function getCountdowns(): Map<string, Countdown> {
 }
 
 /**
+ * Calls `callback` at some point "soon" after `until`, and stores the id of the
+ * setTimeout id in `outId[0]`. This id may change as multiple calls to
+ * setTimeout may be necessary.
+ */
+function longTimeout(callback: () => void, until: Date, setId: (id: number) => void): void {
+  setId(
+    setTimeout(
+      () => {
+        if (until.getTime() <= Date.now()) {
+          callback()
+        } else {
+          longTimeout(callback, until, setId)
+        }
+      },
+      Math.min(2147483647, until.getTime() - Date.now()),
+    ),
+  )
+}
+
+/**
  * Sets timeout that expires at cd.expiryTimestamp and emits the 'expired'
  * event, and sets cd.timeoutId
  */
 function startTimeout(cd: CountdownPrivate) {
-  cd.timeoutId = setTimeout(() => {
-    cd.expired = true
-    handler('expired', cd)
-  }, cd.expiryTimestamp.getTime() - Date.now())
+  longTimeout(
+    () => {
+      cd.expired = true
+      handler('expired', cd)
+    },
+    cd.expiryTimestamp,
+    (id) => (cd.timeoutId = id),
+  )
 }
 
 /**
