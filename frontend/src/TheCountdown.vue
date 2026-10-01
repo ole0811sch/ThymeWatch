@@ -57,22 +57,31 @@ const onRequestTogglePause = () => {
   }
 }
 
-const onClickAnywhere = (e: Event) => {
+const handlerTargetOutisdeDetails = (e: Event) => {
   if (
-    (e.target instanceof Node && detailsContent.value?.contains(e.target)) ||
+    (e.target instanceof Node && details.value?.contains(e.target)) ||
     details.value === null
   ) {
     return
   }
   details.value.open = false
 }
+
+const handlers = [
+  ['pointerdown', handlerTargetOutisdeDetails],
+  ['focusin', handlerTargetOutisdeDetails],
+] as const
 const onDetailsToggle = (e: ToggleEvent) => {
   if (e.oldState === 'closed') {
-    addEventListener('click', onClickAnywhere)
-    if (details.value) details.value.open = true;
+    for (const [type, handler] of handlers) {
+      addEventListener(type, handler)
+    }
+    if (details.value) details.value.open = true
   } else {
-    removeEventListener('click', onClickAnywhere)
-    if (details.value) details.value.open = false;
+    for (const [type, handler] of handlers) {
+      removeEventListener(type, handler)
+    }
+    if (details.value) details.value.open = false
   }
 }
 
@@ -82,7 +91,9 @@ onUnmounted(() => {
   countdownEventTarget.removeEventListener('expired', onExpired, { countdownId: countdown.id })
   countdownEventTarget.removeEventListener('paused', onPaused, { countdownId: countdown.id })
   countdownEventTarget.removeEventListener('continued', onContinued, { countdownId: countdown.id })
-  removeEventListener('click', onClickAnywhere)
+  for (const [type, handler] of handlers) {
+    removeEventListener(type, handler)
+  }
 })
 
 defineExpose({ update })
