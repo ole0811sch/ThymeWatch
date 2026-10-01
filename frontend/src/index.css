@@ -89,7 +89,7 @@ input::placeholder {
 }
 
 :focus-visible:focus-visible:focus-visible, button:focus:not(:active) {
-  border-style: none;
+  border-color: rgba(0, 0, 0, 0);
   outline-width: 2px;
   outline-color: var(--color-contrast-intense);
   outline-offset: 0;
