@@ -28,7 +28,9 @@
   --border-width: 1px;
   --border-radius-smaller: 0.3em;
   --border-radius-small: 1em;
-  --box-padding: 0.2em 0.5em;
+  --box-padding-v: 0.2em;
+  --box-padding-h: 0.5em;
+  --box-padding: var(--box-padding-v) var(--box-padding-h);
   --box-shadow: 0px 0px 2px 1px grey;
 
   color: var(--color-text);
@@ -78,7 +80,7 @@ input[type='text'] {
   color: var(--color-text);
   border-radius: 50vmin;
   border-style: var(--border-style);
-  padding: var(--box-padding);
+  padding: var(--box-padding-v) 0.8em;
   border-color: var(--border-color);
   border-width: var(--border-width);
   user-select: none;
