@@ -89,19 +89,21 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <TheCountdown
-    :details-name="detailsName"
-    :countdown
-    v-for="[id, countdown] in countdowns"
-    :key="id"
-    :ref="
-      (cd) => {
-        if (cd === null) countdownEls.delete(id)
-        else countdownEls.set(id, cd as any)
-      }
-    "
-    style="margin: 0.5em 0"
-  />
+  <div>
+    <TheCountdown
+      :details-name="detailsName"
+      :countdown
+      v-for="[id, countdown] in countdowns"
+      :key="id"
+      :ref="
+        (cd) => {
+          if (cd === null) countdownEls.delete(id)
+          else countdownEls.set(id, cd as any)
+        }
+      "
+      style="margin: 0.5em 0"
+    />
+  </div>
 </template>
 
 <style scoped></style>
