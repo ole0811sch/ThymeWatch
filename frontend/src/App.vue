@@ -26,14 +26,19 @@ const onSubmit = () => {
 </script>
 
 <template>
-  <div style="margin-left: auto; margin-right: auto; margin-top: 1em; width: fit-content">
-    <form @submit.prevent="onSubmit" style="display: flex; align-items: center; margin-bottom: 2em;">
+  <div style="margin-left: auto; margin-right: auto; margin-top: 1em; width:
+  fit-content; flex: 1; display: flex; flex-direction: column;">
+    <form @submit.prevent="onSubmit" style="display: flex; align-items: center; margin-bottom: 2em">
       <span style="margin-right: 1em; user-select: none">Add Alarm:</span>
       <input type="text" spellcheck="false" ref="name-input" placeholder="Name" />
       <input type="text" ref="input" placeholder="Time" v-model="dateInput" />
       <button :disabled="isNaN(dateInputAsDate.getTime())">Submit</button>
     </form>
-    <CountdownList ref="list" />
+    <div style="flex: 1"></div>
+    <div style="display: flex; flex-direction: column; justify-content: center;">
+      <CountdownList ref="list" style="height: fit-content"/>
+    </div>
+    <div style="flex: 2"></div>
   </div>
   <DismissModal v-if="notifs.size > 0"></DismissModal>
 </template>
