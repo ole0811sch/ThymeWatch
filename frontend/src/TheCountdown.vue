@@ -13,6 +13,7 @@ const displayText = ref('')
 const isPaused = ref(countdown.pausedAt !== undefined)
 const isExpired = ref(countdown.expired)
 const details = useTemplateRef('details')
+const detailsContent = useTemplateRef('details-content')
 
 function update() {
   if (!countdown.expiryTimestamp) {
@@ -56,12 +57,32 @@ const onRequestTogglePause = () => {
   }
 }
 
+const onClickAnywhere = (e: Event) => {
+  if (
+    (e.target instanceof Node && detailsContent.value?.contains(e.target)) ||
+    details.value === null
+  ) {
+    return
+  }
+  details.value.open = false
+}
+const onDetailsToggle = (e: ToggleEvent) => {
+  if (e.oldState === 'closed') {
+    addEventListener('click', onClickAnywhere)
+    if (details.value) details.value.open = true;
+  } else {
+    removeEventListener('click', onClickAnywhere)
+    if (details.value) details.value.open = false;
+  }
+}
+
 update()
 
 onUnmounted(() => {
   countdownEventTarget.removeEventListener('expired', onExpired, { countdownId: countdown.id })
   countdownEventTarget.removeEventListener('paused', onPaused, { countdownId: countdown.id })
   countdownEventTarget.removeEventListener('continued', onContinued, { countdownId: countdown.id })
+  removeEventListener('click', onClickAnywhere)
 })
 
 defineExpose({ update })
@@ -76,12 +97,13 @@ defineExpose({ update })
     <button @click="onRequestTogglePause" v-if="!isExpired">
       {{ isPaused ? 'Continue' : 'Pause' }}
     </button>
-    <details style="display: inline" ref="details" :name="detailsName">
+    <details style="display: inline" ref="details" :name="detailsName" @toggle="onDetailsToggle">
       <summary style="cursor: pointer"><span style="user-select: none">Show details</span></summary>
-      <div style="position: relative">
+      <div style="position: relative" ref="details-content">
         <div
           style="
             position: absolute;
+            left: 0.3em;
             top: 0.2em;
             background-color: var(--color-secondary);
             border-radius: var(--border-radius-smaller);
