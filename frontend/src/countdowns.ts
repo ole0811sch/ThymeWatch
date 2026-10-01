@@ -111,7 +111,10 @@ export function continueCountdown(id: string): void {
   }
 
   cd.expiryTimestamp = new Date(
-    cd.expiryTimestamp.getTime() + Math.max(Date.now() - cd.pausedAt.getTime(), 0),
+    Math.min(
+      cd.expiryTimestamp.getTime() + Math.max(Date.now() - cd.pausedAt.getTime(), 0),
+      8_640_000_000_000_000,
+    ),
   )
   cd.pausedAt = undefined
   startTimeout(cd)
