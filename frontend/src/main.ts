@@ -22,7 +22,7 @@ conn.addEventListener('setalarm', ([date, name]) =>
   }),
 )
 let retryCount = 0
-const MAX_RETRY_COUNT = 120
+const MAX_RETRY_COUNT = 6
 const retryCallbackId: [null | number] = [null]
 const onClosed = () => {
   async function f() {
@@ -33,7 +33,7 @@ const onClosed = () => {
     await conn.reconnect()
     //@ts-expect-error conn.state may be affected by conn.reconnect()
     if (conn.state !== 'open') {
-      retryCallbackId[0] = setTimeout(f, 1000)
+      retryCallbackId[0] = setTimeout(f, 10 * 1000)
     }
   }
   if (retryCallbackId[0] === null) {
