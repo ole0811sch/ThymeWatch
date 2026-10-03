@@ -26,7 +26,6 @@ const MAX_RETRY_COUNT = 120
 const retryCallbackId: [null | number] = [null]
 const onClosed = () => {
   async function f() {
-    console.log({ retryCount })
     if (retryCount >= MAX_RETRY_COUNT || conn.state === 'open') {
       return
     }

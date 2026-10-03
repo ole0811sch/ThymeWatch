@@ -62,10 +62,23 @@ onBeforeUnmount(() => {
     v-if="isConnected === 'connecting' || isConnected === 'closed'"
   >
     <span style="margin-right: 0.5em"> The connection to the server was lost. </span>
-    <button style="display: inline" v-if="isConnected === 'closed'" @click="onClickRetry">
+    <button
+      :style="{
+        display: 'inline',
+        ...(isConnected === 'connecting' && {
+          visibility: 'hidden',
+          width: 0,
+          paddingLeft: 0,
+          paddingRight: 0,
+          marginLeft: 0,
+          marginRight: 0,
+        }),
+      }"
+      @click="onClickRetry"
+    >
       Reconnect
     </button>
-    <span v-else>Reconnecting...</span>
+    <span v-if="isConnected === 'connecting'">Reconnecting...</span>
     <span style="flex: 1"></span>
   </div>
   <div
