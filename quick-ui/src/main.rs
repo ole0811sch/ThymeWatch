@@ -1,4 +1,6 @@
-use std::sync::LazyLock;
+use std::process::{Command, Stdio};
+use std::sync::mpsc::Receiver;
+use std::sync::{LazyLock, mpsc};
 use std::time::{Duration, SystemTime};
 
 use async_channel;
@@ -11,14 +13,43 @@ use gtk::{
 use gtk::{Widget, prelude::*};
 use reqwest::StatusCode;
 use tokio::runtime::Runtime;
-use tokio::time::{sleep};
+use tokio::time::sleep;
 
 static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| Runtime::new().unwrap());
 
 enum RequestState {
     Started,
     Response(Result<(), String>),
+    LaunchingServer,
+    LaunchingClient,
     Close,
+}
+
+const SERVER_CMD: [&str; 3] = [
+    "bash",
+    "-c",
+    "cd /home/ole/Documents/code/ThymeWatch/thyme-watch-backend && source activate.sh && java org.thymewatch.App",
+];
+const CLIENT_CMD: [&str; 1] =
+    ["/home/ole/Documents/code/ThymeWatch/frontend/release/0.0.0/ThymeWatch-Linux-0.0.0.AppImage"];
+
+async fn launch(cmd: &'static [&'static str]) -> Result<Receiver<()>, ()> {
+    let Ok(mut child) = Command::new(cmd[0])
+        .args(&cmd[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+    else {
+        return Err(());
+    };
+    let (sender, receiver) = mpsc::channel::<()>();
+    gio::spawn_blocking(move || {
+        let _ = child.wait();
+        sender.send(()).unwrap()
+    });
+
+    Ok(receiver)
 }
 
 fn main() -> glib::ExitCode {
@@ -91,22 +122,75 @@ label.success {
                         #[strong]
                         sender,
                         async move {
-                            sender.send(RequestState::Started).await.unwrap();
-                            let status_code = set_alarm(minutes)
-                                .await
-                                .map_err(|e| format!("{e}"))
-                                .and_then(|code| {
-                                    if code == StatusCode::OK {
-                                        Ok(())
-                                    } else {
-                                        Err(format!("Failure. Server returned status code {code}"))
+                            let mut recv_server_terminated: Option<Receiver<()>> = None;
+                            let mut recv_client_terminated: Option<Receiver<()>> = None;
+                            let response = loop {
+                                sender.send(RequestState::Started).await.unwrap();
+                                let status_code = set_alarm(minutes).await;
+                                println!("{status_code:?}");
+                                if status_code.as_ref().is_err_and(|e| e.is_connect()) {
+                                    sender.send(RequestState::LaunchingServer).await.unwrap();
+                                    match recv_server_terminated {
+                                        Some(ref recv) => match recv.try_recv() {
+                                            Ok(_) => {
+                                                break Err("Server terminated".to_string());
+                                            }
+                                            Err(mpsc::TryRecvError::Empty) => continue,
+                                            res => res.unwrap(),
+                                        },
+                                        _ => (),
+                                    };
+                                    match launch(&SERVER_CMD).await {
+                                        Ok(receiver) => {
+                                            recv_server_terminated = Some(receiver);
+                                            continue;
+                                        }
+                                        Err(_) => {
+                                            break Err("Could not launch server".to_string());
+                                        }
                                     }
-                                });
-                            let is_ok = status_code.is_ok();
-                            sender
-                                .send(RequestState::Response(status_code))
-                                .await
-                                .unwrap();
+                                } else if status_code
+                                    .as_ref()
+                                    .is_ok_and(|c| *c == StatusCode::SERVICE_UNAVAILABLE)
+                                {
+                                    sender.send(RequestState::LaunchingClient).await.unwrap();
+                                    match recv_client_terminated {
+                                        Some(ref recv) => match recv.try_recv() {
+                                            Ok(_) => {
+                                                break Err("Client terminated".to_string());
+                                            }
+                                            Err(mpsc::TryRecvError::Empty) => continue,
+                                            res => res.unwrap(),
+                                        },
+                                        _ => (),
+                                    };
+                                    match launch(&CLIENT_CMD).await {
+                                        Ok(receiver) => {
+                                            recv_client_terminated = Some(receiver);
+                                            continue;
+                                        }
+                                        Err(_) => {
+                                            break Err("Could not launch client".to_string());
+                                        }
+                                    }
+                                } else {
+                                    break status_code
+                                        .as_ref()
+                                        .map_err(|e| format!("{e}"))
+                                        .and_then(|code| {
+                                            if *code == StatusCode::OK {
+                                                Ok(())
+                                            } else {
+                                                Err(format!(
+                                                    "Failure. Server returned status code {code}"
+                                                ))
+                                            }
+                                        });
+                                }
+                            };
+
+                            let is_ok = response.is_ok();
+                            sender.send(RequestState::Response(response)).await.unwrap();
                             if is_ok {
                                 sleep(Duration::from_secs_f32(0.5)).await;
                                 sender.send(RequestState::Close).await.unwrap();
@@ -144,6 +228,12 @@ label.success {
                             },
                             RequestState::Close => {
                                 application.windows().iter().for_each(|w| w.close());
+                            }
+                            RequestState::LaunchingClient => {
+                                label.set_label("Launching client");
+                            }
+                            RequestState::LaunchingServer => {
+                                label.set_label("Launching server");
                             }
                         }
                     }
@@ -194,7 +284,7 @@ label.success {
     application.run()
 }
 
-async fn set_alarm(minutes: f64) -> Result<StatusCode, Box<dyn std::error::Error>> {
+async fn set_alarm(minutes: f64) -> Result<StatusCode, reqwest::Error> {
     let millis = (SystemTime::now() + Duration::try_from_secs_f64(minutes * 60.0).unwrap())
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)

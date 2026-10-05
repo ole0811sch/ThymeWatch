@@ -82,9 +82,10 @@ public class App {
                                     response2.resume();
                                     return true;
                                 });
-                                @Nullable String alarmName = request.getParameter("name");
+                                @Nullable
+                                String alarmName = request.getParameter("name");
                                 var couldRequest = setAlarm(msSinceEpoch,
-                                    alarmName,
+                                        alarmName,
                                         (session, message) -> {
                                             if (message instanceof OkResponseMessage) {
                                                 response.setStatus(HttpStatus.OK_200);
@@ -108,7 +109,11 @@ public class App {
             try {
                 httpServer.start();
                 System.out.println("Press any key to stop the server...");
-                System.in.read();
+                if (System.in.read() == -1) {
+                    while (true) {
+                        Thread.sleep(Long.MAX_VALUE);
+                    }
+                }
             } catch (Exception e) {
                 System.err.println(e);
             } finally {
