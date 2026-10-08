@@ -77,7 +77,7 @@ button:disabled {
   color: var(--color-text-tertiary);
 }
 
-input[type='text'] {
+input {
   background-color: var(--color-secondary);
   color: var(--color-text);
   border-radius: 50vmin;
