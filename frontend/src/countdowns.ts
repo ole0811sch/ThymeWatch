@@ -39,7 +39,7 @@ function longTimeout(callback: () => void, until: Date, setId: (id: number) => v
           longTimeout(callback, until, setId)
         }
       },
-      Math.min(2147483647, until.getTime() - Date.now()),
+      Math.max(0, Math.min(until.getTime() - Date.now(), 2147483647)),
     ),
   )
 }
