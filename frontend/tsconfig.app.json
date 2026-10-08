@@ -10,6 +10,9 @@
     "paths": {
       "@/*": ["./src/*"]
     },
+    "types": [],
+
+    "allowJs": true,
 
     // `vue-tsc --build` produces a .tsbuildinfo file for incremental type-checking.
     // Specified here to keep it out of the root directory.

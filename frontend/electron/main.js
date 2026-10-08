@@ -1,42 +1,56 @@
-import { app, BrowserWindow, session } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { registerWebContents, startServer } from './server.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-function createWindow() {
-  const win = new BrowserWindow({
-    width: 800,
-    height: 600,
-    autoHideMenuBar: true,
-    title: 'ThymeWatch',
-  })
-  if ((process.env.NODE_ENV ?? 'production') === 'production') {
-    win.removeMenu()
+  /** @type {BrowserWindow=} */
+  let window
+
+  function createWindow() {
+    window = new BrowserWindow({
+      width: 800,
+      height: 600,
+      autoHideMenuBar: true,
+      title: 'ThymeWatch',
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+      },
+    })
+    if ((process.env.NODE_ENV ?? 'production') === 'production') {
+      window.removeMenu()
+    }
+
+    window.loadFile(path.join(__dirname, '../dist-electron/index.html'))
   }
 
-  win.loadFile(path.join(__dirname, '../dist-electron/index.html'))
+  app.whenReady().then(async () => {
+    createWindow()
+    await startServer()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow()
+      }
+    })
+  })
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit()
+    }
+  })
+
+  app.on('second-instance', () => {
+    if (window) {
+      if (window.isMinimized()) {
+        window.restore()
+      }
+      window.focus()
+    }
+  })
 }
-
-app.whenReady().then(() => {
-  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    const requestHeaders = {
-      ...details.requestHeaders,
-    }
-    delete requestHeaders.Origin
-    callback({ requestHeaders })
-  })
-  createWindow()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
-    }
-  })
-})
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
-})

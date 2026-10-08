@@ -21,19 +21,13 @@ enum RequestState {
     Started,
     Response(Result<(), String>),
     LaunchingServer,
-    LaunchingClient,
     Close,
 }
 
-const SERVER_CMD: [&str; 3] = [
-    "bash",
-    "-c",
-    "cd /home/ole/Documents/code/ThymeWatch/thyme-watch-backend && source activate.sh && java org.thymewatch.App",
-];
 const CLIENT_CMD: [&str; 1] =
     ["/home/ole/Documents/code/ThymeWatch/frontend/release/0.0.0/ThymeWatch-Linux-0.0.0.AppImage"];
 
-async fn launch(cmd: &'static [&'static str]) -> Result<Receiver<()>, ()> {
+fn launch(cmd: &'static [&'static str]) -> Result<Receiver<()>, ()> {
     let Ok(mut child) = Command::new(cmd[0])
         .args(&cmd[1..])
         .stdin(Stdio::null())
@@ -123,11 +117,9 @@ label.success {
                         sender,
                         async move {
                             let mut recv_server_terminated: Option<Receiver<()>> = None;
-                            let mut recv_client_terminated: Option<Receiver<()>> = None;
                             let response = loop {
                                 sender.send(RequestState::Started).await.unwrap();
                                 let status_code = set_alarm(minutes).await;
-                                println!("{status_code:?}");
                                 if status_code.as_ref().is_err_and(|e| e.is_connect()) {
                                     sender.send(RequestState::LaunchingServer).await.unwrap();
                                     match recv_server_terminated {
@@ -140,7 +132,7 @@ label.success {
                                         },
                                         _ => (),
                                     };
-                                    match launch(&SERVER_CMD).await {
+                                    match launch(&CLIENT_CMD) {
                                         Ok(receiver) => {
                                             recv_server_terminated = Some(receiver);
                                             continue;
@@ -153,26 +145,7 @@ label.success {
                                     .as_ref()
                                     .is_ok_and(|c| *c == StatusCode::SERVICE_UNAVAILABLE)
                                 {
-                                    sender.send(RequestState::LaunchingClient).await.unwrap();
-                                    match recv_client_terminated {
-                                        Some(ref recv) => match recv.try_recv() {
-                                            Ok(_) => {
-                                                break Err("Client terminated".to_string());
-                                            }
-                                            Err(mpsc::TryRecvError::Empty) => continue,
-                                            res => res.unwrap(),
-                                        },
-                                        _ => (),
-                                    };
-                                    match launch(&CLIENT_CMD).await {
-                                        Ok(receiver) => {
-                                            recv_client_terminated = Some(receiver);
-                                            continue;
-                                        }
-                                        Err(_) => {
-                                            break Err("Could not launch client".to_string());
-                                        }
-                                    }
+                                    continue;
                                 } else {
                                     break status_code
                                         .as_ref()
@@ -213,10 +186,6 @@ label.success {
                             }
                             RequestState::Response(response) => match response {
                                 Ok(_) => {
-                                    eprintln!(
-                                        "Clicked! {}",
-                                        Into::<String>::into(entry.buffer().text())
-                                    );
                                     label.set_label("Timer was set");
                                     label.add_css_class("success");
                                 }
@@ -229,11 +198,8 @@ label.success {
                             RequestState::Close => {
                                 application.windows().iter().for_each(|w| w.close());
                             }
-                            RequestState::LaunchingClient => {
-                                label.set_label("Launching client");
-                            }
                             RequestState::LaunchingServer => {
-                                label.set_label("Launching server");
+                                label.set_label("Launching ThymeWatch");
                             }
                         }
                     }
@@ -294,7 +260,7 @@ async fn set_alarm(minutes: f64) -> Result<StatusCode, reqwest::Error> {
         .post("http://localhost:8091/alarm")
         .query(&[("expirytime", millis.to_string())])
         .send()
-        .await?;
+        .await;
 
-    Ok(response.status())
+    Ok(response?.status())
 }

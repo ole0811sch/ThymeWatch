@@ -1,35 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, useTemplateRef, watch, type Ref } from 'vue'
+import { computed, ref, useTemplateRef, type Ref } from 'vue'
 import CountdownList from './CountdownList.vue'
 import { addCountdown } from './countdowns.ts'
 import { notifs } from './notifs.ts'
 import DismissModal from './DismissModal.vue'
-import { Connection } from './test.ts'
 
 const nameInputRef = useTemplateRef('name-input')
 const listRef = useTemplateRef('list')
 const dateInput: Ref<string> = ref('')
 const dateInputAsDate = computed(() => new Date(dateInput.value))
-const connectionProm = Connection.getInstance()
-let connection: Connection | null = null
-const isConnected: Ref<'uninitialized' | 'connecting' | 'open' | 'closed'> = ref('uninitialized')
-
-connectionProm.then((conn) => {
-  connection = conn
-  isConnected.value = connection.state
-  connection.addEventListener('closed', () => (isConnected.value = 'closed'))
-  connection.addEventListener('reconnected', () => (isConnected.value = 'open'))
-})
-const onWindowFocus = () => {
-  if (connection?.state === 'closed') {
-    connection.reconnect()
-  }
-}
-addEventListener('focus', onWindowFocus)
-const onClickRetry = () => {
-  isConnected.value = 'connecting'
-  connection?.reconnect()
-}
 
 const onSubmit = () => {
   if (listRef.value === null || nameInputRef.value === null) {
@@ -44,43 +23,9 @@ const onSubmit = () => {
     name: nameInputRef.value.value || undefined,
   })
 }
-onBeforeUnmount(() => {
-  removeEventListener('focus', onWindowFocus)
-})
 </script>
 
 <template>
-  <div
-    style="
-      display: flex;
-      align-items: center;
-      background-color: var(--color-contrast-intensish);
-      width: 100%;
-      padding: var(--box-padding);
-      box-sizing: border-box;
-    "
-    v-if="isConnected === 'connecting' || isConnected === 'closed'"
-  >
-    <span style="margin-right: 0.5em"> The connection to the server was lost. </span>
-    <button
-      :style="{
-        display: 'inline',
-        ...(isConnected === 'connecting' && {
-          visibility: 'hidden',
-          width: 0,
-          paddingLeft: 0,
-          paddingRight: 0,
-          marginLeft: 0,
-          marginRight: 0,
-        }),
-      }"
-      @click="onClickRetry"
-    >
-      Reconnect
-    </button>
-    <span v-if="isConnected === 'connecting'">Reconnecting...</span>
-    <span style="flex: 1"></span>
-  </div>
   <div
     style="
       margin-left: auto;
