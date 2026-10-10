@@ -40,9 +40,7 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-      app.quit()
-    }
+    window = undefined
   })
 
   app.on('second-instance', () => {
@@ -51,6 +49,8 @@ if (!app.requestSingleInstanceLock()) {
         window.restore()
       }
       window.focus()
+    } else {
+      createWindow()
     }
   })
 }

@@ -120,7 +120,12 @@ label.success {
                             let response = loop {
                                 sender.send(RequestState::Started).await.unwrap();
                                 let status_code = set_alarm(minutes).await;
-                                if status_code.as_ref().is_err_and(|e| e.is_connect()) {
+                                let service_unavailable = status_code
+                                    .as_ref()
+                                    .is_ok_and(|c| *c == StatusCode::SERVICE_UNAVAILABLE);
+                                if status_code.as_ref().is_err_and(|e| e.is_connect())
+                                    || service_unavailable && recv_server_terminated.is_none()
+                                {
                                     sender.send(RequestState::LaunchingServer).await.unwrap();
                                     match recv_server_terminated {
                                         Some(ref recv) => match recv.try_recv() {
@@ -141,9 +146,7 @@ label.success {
                                             break Err("Could not launch server".to_string());
                                         }
                                     }
-                                } else if status_code
-                                    .as_ref()
-                                    .is_ok_and(|c| *c == StatusCode::SERVICE_UNAVAILABLE)
+                                } else if service_unavailable
                                 {
                                     continue;
                                 } else {
