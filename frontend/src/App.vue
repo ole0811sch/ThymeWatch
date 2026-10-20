@@ -19,11 +19,14 @@ const onSubmit = async () => {
     return
   }
   const expiryTimestamp = new Date()
-  expiryTimestamp.setHours(0)
-  expiryTimestamp.setMinutes(0)
-  expiryTimestamp.setSeconds(0)
-  expiryTimestamp.setMilliseconds(0)
-  expiryTimestamp.setTime(expiryTimestamp.getTime() + dateInputAsDate.value.getTime())
+  const expiryTimestampOrig = new Date(expiryTimestamp)
+  expiryTimestamp.setHours(dateInputAsDate.value.getUTCHours())
+  expiryTimestamp.setMinutes(dateInputAsDate.value.getUTCMinutes())
+  expiryTimestamp.setSeconds(dateInputAsDate.value.getUTCSeconds())
+  expiryTimestamp.setMilliseconds(dateInputAsDate.value.getUTCMilliseconds())
+  if (expiryTimestamp.getTime() < expiryTimestampOrig.getTime()) {
+    expiryTimestamp.setDate(expiryTimestamp.getDate() + 1)
+  }
   submitting.value = true
   const conn = await Connection.getInstance()
   await conn.createAlarm(expiryTimestamp, new Date(), nameInputRef.value.value || undefined)
