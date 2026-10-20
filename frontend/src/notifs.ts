@@ -27,7 +27,7 @@ export function closeAllNotifications() {
   notifsCpy.forEach(([_, { notif }]) => notif.close())
 }
 
-export function closeNotifications(id: number) {
+export function closeNotification(id: number) {
   const notif = notifs.value.get(id)
   if (!notif) {
     return

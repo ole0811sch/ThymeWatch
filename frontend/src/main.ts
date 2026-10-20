@@ -10,7 +10,7 @@ import {
   type Countdown,
 } from './countdowns.ts'
 import { audio } from './audio.ts'
-import { closeNotifications, newNotification, notifs } from './notifs.ts'
+import { closeNotification, newNotification, notifs } from './notifs.ts'
 import { Connection } from './connection.ts'
 
 const app = createApp(App)
@@ -36,7 +36,10 @@ conn.addEventListener('setalarm', ({ expiryTime, name, id, startedAt, ketchup })
     id,
   })
 })
-conn.addEventListener('cancelalarm', (alarmId) => removeCountdown(alarmId))
+conn.addEventListener('cancelalarm', (alarmId) => {
+  closeNotification(alarmId)
+  removeCountdown(alarmId)
+})
 let retryCount = 0
 const MAX_RETRY_COUNT = 6
 const retryCallbackId: [null | number] = [null]
@@ -94,6 +97,6 @@ conn.addEventListener('expirealarm', (id) => {
 })
 conn.addEventListener('alarmsdismissed', (ids) => {
   for (const id of ids) {
-    closeNotifications(id)
+    closeNotification(id)
   }
 })
