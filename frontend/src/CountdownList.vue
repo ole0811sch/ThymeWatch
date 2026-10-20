@@ -3,11 +3,11 @@ import { onBeforeUnmount, ref, watchSyncEffect, type Ref } from 'vue'
 import TheCountdown from './TheCountdown.vue'
 import { countdownEventTarget, getCountdowns, type Countdown } from './countdowns.ts'
 
-const countdowns: Ref<Map<string, Countdown>> = ref(getCountdowns())
+const countdowns: Ref<Map<number, Countdown>> = ref(getCountdowns())
 const emit = defineEmits<{ expired: [Countdown] }>()
 /** only contains ids of countdowns in {@link countdownEls} */
-const countdownInactive = ref<Set<string>>(new Set())
-const countdownEls = ref<Map<string, InstanceType<typeof TheCountdown>>>(new Map())
+const countdownInactive = ref<Set<number>>(new Set())
+const countdownEls = ref<Map<number, InstanceType<typeof TheCountdown>>>(new Map())
 
 const visibilityChangeListenerAc = new AbortController()
 const isUnmounted = ref(false)

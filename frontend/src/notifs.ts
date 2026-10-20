@@ -5,7 +5,7 @@ import type { Countdown } from './countdowns'
  * When manually closing notifications, always first remove it from notifs and
  * then close it. That way onclose handlers can check if they need to do something.
  */
-export const notifs: Ref<Map<string, { notif: Notification; countdown: Countdown }>> = ref(
+export const notifs: Ref<Map<number, { notif: Notification; countdown: Countdown }>> = ref(
   new Map(),
 )
 
@@ -25,4 +25,13 @@ export function closeAllNotifications() {
   const notifsCpy = [...notifs.value]
   notifs.value.clear()
   notifsCpy.forEach(([_, { notif }]) => notif.close())
+}
+
+export function closeNotifications(id: number) {
+  const notif = notifs.value.get(id)
+  if (!notif) {
+    return
+  }
+  notifs.value.delete(id)
+  notif.notif.close()
 }

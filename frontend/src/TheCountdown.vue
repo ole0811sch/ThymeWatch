@@ -7,6 +7,7 @@ import {
   pauseCountdown,
   type Countdown,
 } from './countdowns'
+import { Connection } from './connection';
 const { countdown, detailsName } = defineProps<{ countdown: Countdown; detailsName: string }>()
 
 const displayText = ref('')
@@ -45,8 +46,12 @@ const onContinued = () => {
 }
 countdownEventTarget.addEventListener('continued', onContinued, { countdownId: countdown.id })
 
-const onRequestRemove = () => {
-  removeCountdown(countdown.id)
+const removing = ref(false)
+
+const onRequestRemove = async () => {
+  removing.value = true;
+  await (await Connection.getInstance()).cancelAlarm(countdown.id)
+  removing.value = false
 }
 
 const onRequestTogglePause = () => {
@@ -104,7 +109,7 @@ defineExpose({ update })
     <div :class="[...(isExpired ? ['expired'] : isPaused ? ['paused'] : []), 'timer']">
       {{ displayText }}
     </div>
-    <button @click="onRequestRemove">Remove</button>
+    <button @click="onRequestRemove" :disabled="removing">Remove</button>
     <button @click="onRequestTogglePause" v-if="!isExpired">
       {{ isPaused ? 'Continue' : 'Pause' }}
     </button>

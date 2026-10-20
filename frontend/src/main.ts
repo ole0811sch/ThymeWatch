@@ -1,9 +1,17 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router'
-import { addCountdown, countdownEventTarget, type Countdown } from './countdowns.ts'
+import {
+  addCountdown,
+  countdownEventTarget,
+  getCountdowns,
+  removeAllCountdown,
+  removeCountdown,
+  type Countdown,
+} from './countdowns.ts'
 import { audio } from './audio.ts'
-import { newNotification } from './notifs.ts'
+import { closeNotifications, newNotification, notifs } from './notifs.ts'
+import { Connection } from './connection.ts'
 
 const app = createApp(App)
 
@@ -12,14 +20,52 @@ app.use(router)
 app.mount('#app')
 
 Notification.requestPermission()
-if (window.electronApi) {
-  window.electronApi.onSetAlarm(async (alarmConfig) => {
-    addCountdown({
-      expiryTimestamp: alarmConfig.expiryTime,
-      startedAt: new Date(),
-      name: alarmConfig.name,
-    })
+const conn = await Connection.getInstance()
+if (conn.state === 'open') {
+  conn.subscribe()
+}
+conn.addEventListener('reconnected', () => {
+  conn.subscribe()
+})
+conn.addEventListener('ketchup', () => void removeAllCountdown())
+conn.addEventListener('setalarm', ({ expiryTime, name, id, startedAt, ketchup }) => {
+  addCountdown({
+    expiryTimestamp: expiryTime,
+    startedAt,
+    name,
+    id,
   })
+})
+conn.addEventListener('cancelalarm', (alarmId) => removeCountdown(alarmId))
+let retryCount = 0
+const MAX_RETRY_COUNT = 6
+const retryCallbackId: [null | number] = [null]
+const onClosed = () => {
+  async function f() {
+    if (retryCount >= MAX_RETRY_COUNT || conn.state === 'open') {
+      return
+    }
+    ++retryCount
+    await conn.reconnect()
+    //@ts-expect-error conn.state may be affected by conn.reconnect()
+    if (conn.state !== 'open') {
+      retryCallbackId[0] = setTimeout(f, 10 * 1000)
+    }
+  }
+  if (retryCallbackId[0] === null) {
+    f()
+  }
+}
+conn.addEventListener('closed', onClosed)
+conn.addEventListener('reconnected', () => {
+  retryCount = 0
+  if (retryCallbackId[0] !== null) {
+    clearTimeout(retryCallbackId[0])
+    retryCallbackId[0] = null
+  }
+})
+if (conn.state === 'closed') {
+  onClosed()
 }
 
 const onExpired = async (countdown: Countdown) => {
@@ -40,3 +86,14 @@ const onExpired = async (countdown: Countdown) => {
   }
 }
 countdownEventTarget.addEventListener('expired', onExpired)
+conn.addEventListener('expirealarm', (id) => {
+  const cd = getCountdowns().get(id)
+  if (cd) {
+    onExpired(cd)
+  }
+})
+conn.addEventListener('alarmsdismissed', (ids) => {
+  for (const id of ids) {
+    closeNotifications(id)
+  }
+})

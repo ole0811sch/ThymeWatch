@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { closeAllNotifications, notifs } from './notifs'
-import { audio } from './audio'
-import { onBeforeMount, onMounted, useTemplateRef } from 'vue'
+import { audio as audio2 } from './audio'
+import { onBeforeMount, onMounted, onUnmounted, useTemplateRef } from 'vue'
+import { Connection as Connection2 } from './connection'
 
+const audio = audio2
+const Connection = Connection2
 const dialog = useTemplateRef('dialog')
 onBeforeMount(() => {
   if (document.activeElement instanceof HTMLElement) {
@@ -11,6 +14,9 @@ onBeforeMount(() => {
 })
 onMounted(() => {
   dialog.value?.showModal()
+})
+onUnmounted(() => {
+  audio.stop()
 })
 </script>
 
@@ -29,8 +35,11 @@ onMounted(() => {
       color: var(--color-text);
     "
     @close="
-      () => {
+      async () => {
         audio.stop()
+        await (
+          await Connection.getInstance()
+        ).dismissAlarms([...notifs.values()].map((n) => n.countdown.id))
         closeAllNotifications()
       }
     "
