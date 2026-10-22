@@ -294,8 +294,8 @@ func SendAlarmContinuedToClient(ctx context.Context, info *MyClientInfo, id floa
 	return err
 }
 
-func (ud *UserData) startAlarm(ctx context.Context, alarm *StoredAlarm) {
-	ctx2, cancel2 := context.WithDeadline(ctx, alarm.Spec.ExpiryTime)
+func (ud *UserData) startAlarm(alarm *StoredAlarm) {
+	ctx2, cancel2 := context.WithDeadline(context.Background(), alarm.Spec.ExpiryTime)
 	if alarm.cancel != nil {
 		alarm.cancel()
 	}
@@ -303,13 +303,13 @@ func (ud *UserData) startAlarm(ctx context.Context, alarm *StoredAlarm) {
 	id := alarm.Id
 	go func() {
 		<-ctx2.Done()
-		if ctx.Err() != nil {
-			return
-		}
 		if ctx2.Err() == context.DeadlineExceeded {
 			// alarm must have expired, since only the new deadline triggered
-			ud.expireAlarm(ctx, id)
+			ctx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
+			ud.expireAlarm(ctx3, id)
+			cancel3()
 		}
+		cancel2()
 	}()
 }
 
@@ -331,7 +331,7 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) floa
 		}
 		value.alarms[value.alarmId] = newStoredAlarm
 		value.alarmId++
-		ud.startAlarm(ctx, newStoredAlarm)
+		ud.startAlarm(newStoredAlarm)
 		for info := range value.subscribers {
 			err := SendAlarmsToClient(ctx, info, []*StoredAlarm{newStoredAlarm}, false)
 			if err != nil {
@@ -452,7 +452,7 @@ func (ud *UserData) continueAlarm(ctx context.Context, continueId float64) {
 		pausedDuration := time.Since(storedAlarm.PausedAtTime.value)
 		storedAlarm.PausedAtTime.present = false
 		storedAlarm.Spec.ExpiryTime = storedAlarm.Spec.ExpiryTime.Add(pausedDuration)
-		ud.startAlarm(ctx, storedAlarm)
+		ud.startAlarm(storedAlarm)
 		for info := range udc.subscribers {
 			err := SendAlarmContinuedToClient(ctx, info, continueId, storedAlarm.Spec.ExpiryTime)
 			if err != nil {
