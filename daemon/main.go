@@ -16,21 +16,16 @@ import (
 	"github.com/coder/websocket"
 )
 
+type UserDataContent struct {
+	subscribers   map[*MyClientInfo]bool
+	expiredAlarms []float64
+	pausedAlarms  map[float64]bool
+	alarmId       float64
+	alarms        map[float64]*StoredAlarm
+}
+
 type UserData struct {
-	subscribers          map[*MyClientInfo]bool
-	expiredAlarms        []float64
-	pausedAlarms         map[float64]bool
-	newAlarm             chan AlarmSpecification
-	newAlarmRes          chan float64
-	alarmId              float64
-	cancelAlarm          chan float64
-	expiredAlarm         chan float64
-	pauseAlarm           chan float64
-	continueAlarm        chan float64
-	dismissAlarms        chan []float64
-	registerSubscriber   chan *MyClientInfo
-	unregisterSubscriber chan *MyClientInfo
-	alarms               map[float64]*StoredAlarm
+	lb Lockbox[UserDataContent]
 }
 
 type (
@@ -176,17 +171,11 @@ var HandleCreateAlarm = func(hd *MyHandlerData, ctx context.Context, req []byte,
 	}
 
 	fmt.Printf("Set alarm for %v", message.ExpiryTime)
-	userData := hd.hub.UserData
-	select {
-	case <-ctx.Done():
-		return
-	case userData.newAlarm <- AlarmSpecification{
+	alarmId := hd.hub.UserData.newAlarm(ctx, &AlarmSpecification{
 		ExpiryTime: message.ExpiryTime,
 		Name:       message.Name,
 		StartedAt:  message.StartedAt,
-	}:
-	}
-	alarmId := <-userData.newAlarmRes
+	})
 	responder(ctx, AlarmCreatedMessage{alarmId}, false)
 }
 
@@ -200,13 +189,8 @@ var HandleSubscribe = func(hd *MyHandlerData, ctx context.Context, req []byte, r
 	}
 	_ = message
 
-	select {
-	case <-ctx.Done():
-		fmt.Println("E2")
-		return
-	case hd.hub.UserData.registerSubscriber <- hd.info:
-	}
-	fmt.Println("E3")
+	hd.hub.UserData.registerSubscriber(ctx, hd.info)
+	fmt.Println("E2")
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -218,11 +202,7 @@ var HandleDismissAlarms MyHandlerFunc = func(hd *MyHandlerData, ctx context.Cont
 		return
 	}
 
-	select {
-	case <-ctx.Done():
-		return
-	case hd.hub.UserData.dismissAlarms <- message.Ids:
-	}
+	hd.hub.UserData.dismissAlarms(ctx, message.Ids)
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -234,11 +214,7 @@ var HandleCancelAlarm MyHandlerFunc = func(hd *MyHandlerData, ctx context.Contex
 		return
 	}
 
-	select {
-	case <-ctx.Done():
-		return
-	case hd.hub.UserData.cancelAlarm <- message.Id:
-	}
+	hd.hub.UserData.cancelAlarm(ctx, message.Id)
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -250,11 +226,7 @@ var HandlePauseAlarm MyHandlerFunc = func(hd *HandlerData[UserData], ctx context
 		return
 	}
 
-	select {
-	case <-ctx.Done():
-		return
-	case hd.hub.UserData.pauseAlarm <- message.Id:
-	}
+	hd.hub.UserData.pauseAlarm(ctx, message.Id)
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -266,11 +238,7 @@ var HandleContinueAlarm MyHandlerFunc = func(hd *HandlerData[UserData], ctx cont
 		return
 	}
 
-	select {
-	case <-ctx.Done():
-		return
-	case hd.hub.UserData.continueAlarm <- message.Id:
-	}
+	hd.hub.UserData.continueAlarm(ctx, message.Id)
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -286,18 +254,13 @@ func registerHandlers(hub *MyHub) {
 
 func makeUserData() UserData {
 	return UserData{
-		subscribers:          make(map[*MyClientInfo]bool),
-		newAlarm:             make(chan AlarmSpecification),
-		newAlarmRes:          make(chan float64),
-		registerSubscriber:   make(chan *MyClientInfo),
-		cancelAlarm:          make(chan float64),
-		expiredAlarm:         make(chan float64),
-		dismissAlarms:        make(chan []float64),
-		unregisterSubscriber: make(chan *MyClientInfo),
-		alarms:               make(map[float64]*StoredAlarm),
-		pausedAlarms:         make(map[float64]bool),
-		pauseAlarm:           make(chan float64),
-		continueAlarm:        make(chan float64),
+		lb: Lockbox[UserDataContent]{
+			value: UserDataContent{
+				subscribers:  make(map[*MyClientInfo]bool),
+				alarms:       make(map[float64]*StoredAlarm),
+				pausedAlarms: make(map[float64]bool),
+			},
+		},
 	}
 }
 
@@ -341,7 +304,7 @@ func (ud *UserData) startAlarm(ctx context.Context, alarm *StoredAlarm) {
 		}
 		if ctx2.Err() == context.DeadlineExceeded {
 			// alarm must have expired, since only the new deadline triggered
-			ud.expiredAlarm <- id
+			ud.expireAlarm(ctx, id)
 		}
 	}()
 }
@@ -354,121 +317,149 @@ func (ud *UserData) stopAlarm(alarm *StoredAlarm) {
 	alarm.cancel = nil
 }
 
-func (ud *UserData) run(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
+func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) float64 {
+	return ud.lb.WriteReturning(func(value *UserDataContent) float64 {
+		newStoredAlarm := &StoredAlarm{
+			Spec:               *spec,
+			Id:                 value.alarmId,
+			OriginalExpiryTime: spec.ExpiryTime,
+			PausedAtTime:       Optional[time.Time]{},
+		}
+		value.alarms[value.alarmId] = newStoredAlarm
+		value.alarmId++
+		ud.startAlarm(ctx, newStoredAlarm)
+		for info := range value.subscribers {
+			SendAlarmsToClient(ctx, info, []*StoredAlarm{newStoredAlarm}, false)
+			if ctx.Err() != nil {
+				return newStoredAlarm.Id
+			}
+		}
+		return newStoredAlarm.Id
+	})
+}
+
+func (ud *UserData) registerSubscriber(ctx context.Context, client *MyClientInfo) {
+	ud.lb.Write(func(value *UserDataContent) {
+		value.subscribers[client] = true
+		slice := slices.Collect(maps.Values(value.alarms))
+		slices.SortFunc(slice, func(a *StoredAlarm, b *StoredAlarm) int {
+			if a.Spec.StartedAt.Before(b.Spec.StartedAt) {
+				return -1
+			}
+			if a.Spec.StartedAt.Equal(b.Spec.StartedAt) {
+				return 0
+			}
+			return 1
+		})
+		SendAlarmsToClient(ctx, client, slice, true)
+		if ctx.Err() != nil {
 			return
-		case info := <-ud.registerSubscriber:
-			ud.subscribers[info] = true
-			slice := slices.Collect(maps.Values(ud.alarms))
-			slices.SortFunc(slice, func(a *StoredAlarm, b *StoredAlarm) int {
-				if a.Spec.StartedAt.Before(b.Spec.StartedAt) {
-					return -1
-				}
-				if a.Spec.StartedAt.Equal(b.Spec.StartedAt) {
-					return 0
-				}
-				return 1
-			})
-			SendAlarmsToClient(ctx, info, slice, true)
+		}
+	})
+}
+
+func (ud *UserData) unregisterSubscriber(client *MyClientInfo) {
+	ud.lb.Write(func(value *UserDataContent) {
+		delete(value.subscribers, client)
+	})
+}
+
+func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) {
+	ud.lb.Write(func(value *UserDataContent) {
+		value.expiredAlarms = append(value.expiredAlarms, alarmId)
+		for info := range value.subscribers {
+			SendExpiredAlarmToClient(ctx, info, alarmId)
 			if ctx.Err() != nil {
 				return
 			}
-		case newAlarm := <-ud.newAlarm:
-			newStoredAlarm := &StoredAlarm{
-				Spec:               newAlarm,
-				Id:                 ud.alarmId,
-				OriginalExpiryTime: newAlarm.ExpiryTime,
-				PausedAtTime:       Optional[time.Time]{},
-			}
-			ud.alarms[ud.alarmId] = newStoredAlarm
-			ud.newAlarmRes <- ud.alarmId
-			ud.alarmId++
-			ud.startAlarm(ctx, newStoredAlarm)
-			for info := range ud.subscribers {
-				SendAlarmsToClient(ctx, info, []*StoredAlarm{newStoredAlarm}, false)
-				if ctx.Err() != nil {
-					return
-				}
-			}
-		case alarmId := <-ud.expiredAlarm:
-			ud.expiredAlarms = append(ud.expiredAlarms, alarmId)
-			for info := range ud.subscribers {
-				SendExpiredAlarmToClient(ctx, info, alarmId)
-				if ctx.Err() != nil {
-					return
-				}
-			}
-		case ids := <-ud.dismissAlarms:
-			if len(ids) == 0 {
-				ids = ud.expiredAlarms
-			}
-			for info := range ud.subscribers {
-				SendAlarmsDismissedToClient(ctx, info, ids)
-				if ctx.Err() != nil {
-					return
-				}
-			}
-			ud.expiredAlarms = nil
-		case canceledId := <-ud.cancelAlarm:
-			l1 := len(ud.alarms)
-			delete(ud.alarms, canceledId)
-			if l1 == len(ud.alarms) {
-				continue
-			}
-			for info := range ud.subscribers {
-				SendCanceledAlarmToClient(ctx, info, canceledId)
-				if ctx.Err() != nil {
-					return
-				}
-			}
-		case pauseId := <-ud.pauseAlarm:
-			_, isPausedAlready := ud.pausedAlarms[pauseId]
-			if isPausedAlready {
-				continue
-			}
-			ud.pausedAlarms[pauseId] = true
-			storedAlarm := ud.alarms[pauseId]
-			if storedAlarm == nil {
-				delete(ud.pausedAlarms, pauseId)
-				continue
-			}
-			pausedAtTime := time.Now()
-			storedAlarm.PausedAtTime = Some(pausedAtTime)
-			ud.stopAlarm(storedAlarm)
-			for info := range ud.subscribers {
-				SendAlarmPausedToClient(ctx, info, pauseId, pausedAtTime)
-				if ctx.Err() != nil {
-					return
-				}
-			}
-		case continueId := <-ud.continueAlarm:
-			_, wasPaused := ud.pausedAlarms[continueId]
-			if !wasPaused {
-				continue
-			}
-			delete(ud.pausedAlarms, continueId)
-			storedAlarm := ud.alarms[continueId]
-			if storedAlarm == nil {
-				continue
-			}
-			if !storedAlarm.PausedAtTime.present {
-				// inconsistent view
-				continue
-			}
-			pausedDuration := time.Since(storedAlarm.PausedAtTime.value)
-			storedAlarm.PausedAtTime.present = false
-			storedAlarm.Spec.ExpiryTime = storedAlarm.Spec.ExpiryTime.Add(pausedDuration)
-			ud.startAlarm(ctx, storedAlarm)
-			for info := range ud.subscribers {
-				SendAlarmContinuedToClient(ctx, info, continueId, storedAlarm.Spec.ExpiryTime)
-				if ctx.Err() != nil {
-					return
-				}
+		}
+	})
+}
+
+/**
+ * If ids is empty, dismisses all expired alarms
+ */
+func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) {
+	ud.lb.Write(func(value *UserDataContent) {
+		if len(ids) == 0 {
+			ids = value.expiredAlarms
+		}
+		for info := range value.subscribers {
+			SendAlarmsDismissedToClient(ctx, info, ids)
+			if ctx.Err() != nil {
+				return
 			}
 		}
-	}
+		value.expiredAlarms = nil
+	})
+}
+
+func (ud *UserData) pauseAlarm(ctx context.Context, pauseId float64) {
+	ud.lb.Write(func(udc *UserDataContent) {
+		_, isPausedAlready := udc.pausedAlarms[pauseId]
+		if isPausedAlready {
+			return
+		}
+		udc.pausedAlarms[pauseId] = true
+		storedAlarm := udc.alarms[pauseId]
+		if storedAlarm == nil {
+			delete(udc.pausedAlarms, pauseId)
+			return
+		}
+		pausedAtTime := time.Now()
+		storedAlarm.PausedAtTime = Some(pausedAtTime)
+		ud.stopAlarm(storedAlarm)
+		for info := range udc.subscribers {
+			SendAlarmPausedToClient(ctx, info, pauseId, pausedAtTime)
+			if ctx.Err() != nil {
+				return
+			}
+		}
+	})
+}
+
+func (ud *UserData) continueAlarm(ctx context.Context, continueId float64) {
+	ud.lb.Write(func(udc *UserDataContent) {
+		_, wasPaused := udc.pausedAlarms[continueId]
+		if !wasPaused {
+			return
+		}
+		delete(udc.pausedAlarms, continueId)
+		storedAlarm := udc.alarms[continueId]
+		if storedAlarm == nil {
+			return
+		}
+		if !storedAlarm.PausedAtTime.present {
+			// inconsistent view
+			return
+		}
+		pausedDuration := time.Since(storedAlarm.PausedAtTime.value)
+		storedAlarm.PausedAtTime.present = false
+		storedAlarm.Spec.ExpiryTime = storedAlarm.Spec.ExpiryTime.Add(pausedDuration)
+		ud.startAlarm(ctx, storedAlarm)
+		for info := range udc.subscribers {
+			SendAlarmContinuedToClient(ctx, info, continueId, storedAlarm.Spec.ExpiryTime)
+			if ctx.Err() != nil {
+				return
+			}
+		}
+	})
+}
+
+func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) {
+	ud.lb.Write(func(udc *UserDataContent) {
+		l1 := len(udc.alarms)
+		delete(udc.alarms, cancelId)
+		if l1 == len(udc.alarms) {
+			return
+		}
+		for info := range udc.subscribers {
+			SendCanceledAlarmToClient(ctx, info, cancelId)
+			if ctx.Err() != nil {
+				return
+			}
+		}
+	})
 }
 
 func main() {
@@ -477,12 +468,11 @@ func main() {
 	)
 	defer stop()
 
-	userData := makeUserData()
-	hub := newHub(userData)
+	hub := newHub(makeUserData())
 	hub.lb.Write(func(value *HubContent[UserData]) {
 		value.ThreadTimeout = time.Second * 5
 		value.On.Unregistered = func(e UnregisterItem[UserData]) {
-			userData.unregisterSubscriber <- e.info
+			hub.UserData.unregisterSubscriber(e.info)
 		}
 	})
 	registerHandlers(hub)
@@ -499,7 +489,6 @@ func main() {
 			log.Fatalf("server error: %v", err)
 		}
 	}()
-	go userData.run(ctx)
 
 	<-ctx.Done()
 	hub.Close()
