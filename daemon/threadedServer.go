@@ -149,16 +149,11 @@ type MessageHeader struct {
 }
 
 type HandlerData[T any] struct {
-	hub      *Hub[T]
-	info     *ClientInfo[T]
-	channels HandlerChannels
-}
-
-type HandlerChannels struct {
+	hub  *Hub[T]
+	info *ClientInfo[T]
 	// (data, id), received by us
-	in chan Pair[[]byte, float64]
-	// (data, replyingTo, isError), send by us
-	out chan Triple[any, float64, bool]
+	in      chan Pair[[]byte, float64]
+	threads *Lockbox[OpenThreads[T]]
 }
 
 type (
@@ -166,26 +161,24 @@ type (
 	Receiver  func(context.Context) ([]byte, Responder, error)
 )
 
-func MakeSender(channels *HandlerChannels, replyingTo float64) Responder {
+func MakeSender[T any](replyingTo float64, handlerData *HandlerData[T]) Responder {
 	used := false
 	return func(ctx context.Context, data any, isErr bool) (Receiver, error) {
 		if used {
 			return nil, fmt.Errorf("Sender was used already")
 		}
 		used = true
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case channels.out <- MakeTriple(data, replyingTo, isErr):
-			if isErr {
-				return nil, nil
-			}
-			return MakeReceiver(channels), nil
+		if isErr {
+			handlerData.sendOnThread(ctx, nil, data.(error), replyingTo)
+			return nil, nil
+		} else {
+			handlerData.sendOnThread(ctx, data, nil, replyingTo)
+			return MakeReceiver(handlerData), nil
 		}
 	}
 }
 
-func MakeReceiver(channels *HandlerChannels) Receiver {
+func MakeReceiver[T any](handlerData *HandlerData[T]) Receiver {
 	used := false
 	return func(ctx context.Context) ([]byte, Responder, error) {
 		if used {
@@ -195,8 +188,8 @@ func MakeReceiver(channels *HandlerChannels) Receiver {
 		select {
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
-		case event := <-channels.in:
-			return event.First, MakeSender(channels, event.Second), nil
+		case event := <-handlerData.in:
+			return event.First, MakeSender(event.Second, handlerData), nil
 		}
 	}
 }
@@ -260,32 +253,25 @@ func handleOutgoingMessages[T any](ctx context.Context, info *ClientInfo[T]) {
 	fmt.Println("Close outgoing messages")
 }
 
-func handleThreadMessages[T any](ctx context.Context, info *ClientInfo[T], handlerData *HandlerData[T], threads *Lockbox[OpenThreads[T]]) {
-	var event Triple[any, float64, bool]
-	select {
-	case <-ctx.Done():
-		return
-	case event = <-handlerData.channels.out:
-	}
-
-	if event.Third {
-		protErr, ok := event.First.(websocket.CloseError)
+func (hd *HandlerData[T]) sendOnThread(ctx context.Context, body any, err error, inReplyTo float64) {
+	if err != nil {
+		protErr, ok := err.(websocket.CloseError)
 		if ok {
-			closeWithError(protErr.Code, protErr.Reason, info)
+			closeWithError(protErr.Code, protErr.Reason, hd.info)
 		} else {
-			closeWithError(websocket.StatusInternalError, event.First.(error).Error(), info)
+			closeWithError(websocket.StatusInternalError, err.Error(), hd.info)
 		}
 		return
 	}
 
-	id, err := SendMessageToClient(ctx, info, Optional[string]{}, Some(event.Second), event.First)
+	id, err := SendMessageToClient(ctx, hd.info, Optional[string]{}, Some(inReplyTo), body)
 	if err != nil {
 		return // ctx is done
 	}
 
-	threads.Write(func(t *OpenThreads[T]) {
-		t.msgIdToHandlerData[id] = handlerData
-		t.handlerDataToMsgId[handlerData] = id
+	hd.threads.Write(func(t *OpenThreads[T]) {
+		t.msgIdToHandlerData[id] = hd
+		t.handlerDataToMsgId[hd] = id
 	})
 }
 
@@ -385,16 +371,13 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 			}
 			go func() {
 				handlerData := &HandlerData[T]{
-					hub:  hub,
-					info: info,
-					channels: HandlerChannels{
-						in:  make(chan Pair[[]byte, float64]),
-						out: make(chan Triple[any, float64, bool]),
-					},
+					hub:     hub,
+					info:    info,
+					in:      make(chan Pair[[]byte, float64]),
+					threads: &openThreads,
 				}
 				ctx3, cancel3 := context.WithTimeout(ctx, threadTimeout)
-				go handleThreadMessages(ctx3, info, handlerData, &openThreads)
-				handlerFn(handlerData, ctx3, msg[endHeader+1:], MakeSender(&handlerData.channels, header.Id))
+				handlerFn(handlerData, ctx3, msg[endHeader+1:], MakeSender(header.Id, handlerData))
 				cancel3()
 				openThreads.Write(func(t *OpenThreads[T]) {
 					id := t.handlerDataToMsgId[handlerData]
@@ -418,7 +401,7 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 			select {
 			case <-ctx.Done():
 				return
-			case data.channels.in <- MakePair(msg[endHeader+1:], header.Id):
+			case data.in <- MakePair(msg[endHeader+1:], header.Id):
 			}
 		}
 	}
