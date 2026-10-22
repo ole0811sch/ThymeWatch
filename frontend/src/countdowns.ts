@@ -75,6 +75,16 @@ export function continueCountdown(id: number, newExpiryTime: Date): void {
   handler('continued', cd)
 }
 
+export function expireCountdown(id: number): void {
+  const cd = countdowns.get(id)
+  if (!cd || cd.expired) {
+    return
+  }
+
+  cd.expired = true
+  handler('expired', cd)
+}
+
 function handler(type: CountdownEventType, cd: Countdown): void {
   handlers[type].get(cd.id)?.forEach((handler) => handler(cd))
   handlers[type].get(null)?.forEach((handler) => handler(cd))

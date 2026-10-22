@@ -5,6 +5,7 @@ import {
   addCountdown,
   continueCountdown,
   countdownEventTarget,
+  expireCountdown,
   getCountdowns,
   pauseCountdown,
   removeAllCountdown,
@@ -112,10 +113,7 @@ const onExpired = async (countdown: Countdown) => {
 }
 countdownEventTarget.addEventListener('expired', onExpired)
 conn.addEventListener('expirealarm', (id) => {
-  const cd = getCountdowns().get(id)
-  if (cd) {
-    onExpired(cd)
-  }
+  expireCountdown(id)
 })
 conn.addEventListener('alarmsdismissed', (ids) => {
   for (const id of ids) {
