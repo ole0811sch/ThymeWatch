@@ -12,6 +12,7 @@ import {
 import { audio } from './audio.ts'
 import { closeNotification, newNotification, notifs } from './notifs.ts'
 import { Connection } from './connection.ts'
+import { Abort, Context } from './context.ts'
 
 const app = createApp(App)
 
@@ -20,13 +21,18 @@ app.use(router)
 app.mount('#app')
 
 Notification.requestPermission()
-const conn = await Connection.getInstance()
-if (conn.state === 'open') {
-  conn.subscribe()
+const ctx = Context.background()
+const conn = Connection.getInstance()
+async function trySubscribe() {
+  const res = await conn.subscribe(ctx)
+  if (res instanceof Abort || res instanceof Error) {
+    alert('Could not connect to server')
+  }
 }
-conn.addEventListener('reconnected', () => {
-  conn.subscribe()
-})
+if (conn.state === 'open') {
+  await trySubscribe()
+}
+conn.addEventListener('reconnected', trySubscribe)
 conn.addEventListener('ketchup', () => void removeAllCountdown())
 conn.addEventListener('setalarm', ({ expiryTime, name, id, startedAt, ketchup }) => {
   addCountdown({

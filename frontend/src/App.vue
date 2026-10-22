@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { onMounted, ref, useTemplateRef, type Ref } from 'vue'
+import { onMounted, onUnmounted, ref, useTemplateRef, type Ref } from 'vue'
 import CountdownList from './CountdownList.vue'
 import { notifs } from './notifs.ts'
 import DismissModal from './DismissModal.vue'
 import { Connection } from './connection.ts'
+import { Context } from './context.ts'
 
 const nameInputRef = useTemplateRef('name-input')
 const listRef = useTemplateRef('list')
 const inputRef = useTemplateRef('input')
 const dateInputAsDate: Ref<Date | undefined> = ref(undefined)
-  const submitting: Ref<boolean> = ref(false)
+const submitting: Ref<boolean> = ref(false)
+const ctx = Context.background()
 
 const onSubmit = async () => {
   if (listRef.value === null || nameInputRef.value === null) {
@@ -28,8 +30,7 @@ const onSubmit = async () => {
     expiryTimestamp.setDate(expiryTimestamp.getDate() + 1)
   }
   submitting.value = true
-  const conn = await Connection.getInstance()
-  await conn.createAlarm(expiryTimestamp, new Date(), nameInputRef.value.value || undefined)
+  await Connection.getInstance().createAlarm(ctx, expiryTimestamp, new Date(), nameInputRef.value.value || undefined)
   submitting.value = false
 }
 
@@ -38,6 +39,10 @@ onMounted(() => {
   now.setSeconds(0)
   now.setMilliseconds(0)
   inputRef.value!.value = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+})
+
+onUnmounted(() => {
+  ctx.abort()
 })
 </script>
 
@@ -62,7 +67,9 @@ onMounted(() => {
         placeholder="Time"
         @input="() => (dateInputAsDate = inputRef?.valueAsDate ?? undefined)"
       />
-      <button :disabled="dateInputAsDate === undefined || isNaN(dateInputAsDate.getTime()) || submitting">
+      <button
+        :disabled="dateInputAsDate === undefined || isNaN(dateInputAsDate.getTime()) || submitting"
+      >
         Submit
       </button>
     </form>

@@ -1,3 +1,5 @@
+import { Abort, Context, type TimeoutContext } from './context'
+
 export const tags = [
   'CREATE_ALARM',
   'CANCEL_ALARM',
@@ -56,7 +58,9 @@ export type ConnectionEventMap = {
 
 export class Connection {
   private i = 0
-  private static instance: Promise<Connection> | null = null
+  private static connectedInstance: Promise<Connection | Error> | null = null
+  private static instance: Connection | null = null
+  private messageTimeoutMs: number = 1000
   private reconnecting: Promise<undefined> | null = null
   private handlers: {
     [T in ConnectionEventType]: Set<(data: ConnectionEventMap[T]) => void>
@@ -75,10 +79,14 @@ export class Connection {
     private promises: Map<number, (response: [MessageHeader, MessageBody] | Error) => void>,
   ) {}
 
-  async sendMessage(tagOrReplyId: Tag | number, obj: MessageBody): Promise<number | Error> {
+  async sendMessage<T>(
+    ctx: Context<T>,
+    tagOrReplyId: Tag | number,
+    obj: MessageBody,
+  ): Promise<number | Error | Abort<T>> {
     while (this.socket === null) {
-      const res = await this.reconnect()
-      if (res instanceof Error) {
+      const res = await Promise.race([this.reconnect(), ctx.reason])
+      if (res instanceof Error || res instanceof Abort) {
         return res
       }
     }
@@ -94,18 +102,19 @@ export class Connection {
     return id
   }
 
-  async asyncSendMessage(
+  async asyncSendMessage<T>(
+    ctx: Context<T>,
     tagOrReplyId: Tag | number,
     obj: MessageBody,
-  ): Promise<[MessageHeader, MessageBody] | Error> {
-    const id = await this.sendMessage(tagOrReplyId, obj)
-    if (id instanceof Error) {
+  ): Promise<[MessageHeader, MessageBody] | Error | Abort<T>> {
+    const id = await this.sendMessage(ctx, tagOrReplyId, obj)
+    if (id instanceof Error || id instanceof Abort) {
       return id
     }
     let res: (response: [MessageHeader, MessageBody] | Error) => void
     const prom = new Promise<[MessageHeader, MessageBody] | Error>((res_) => void (res = res_))
     this.promises.set(id, res!)
-    return prom
+    return Promise.race([prom, ctx.reason])
   }
 
   close() {
@@ -115,7 +124,10 @@ export class Connection {
     this.socket.close()
   }
 
-  private async handleMessage(event: MessageEvent<string>) {
+  private async handleMessage<T>(
+    ctx: Context<T>,
+    event: MessageEvent<string>,
+  ): Promise<undefined | Abort<T>> {
     console.log('Message from server: ', event.data)
     const data = event.data
     const firstSpaceIdx = data.indexOf('\n')
@@ -168,7 +180,7 @@ export class Connection {
     }
 
     switch (header.tag) {
-      case 'NOTIFY_ALARM':
+      case 'NOTIFY_ALARM': {
         const expiryDates: Date[] = []
         const startedAts: Date[] = []
         if (
@@ -208,52 +220,93 @@ export class Connection {
             ketchup: body.ketchup,
           })
         }
-        await this.sendMessage(header.id, { status: 200 })
+        const ctx2 = this.makeMessageContext(ctx)
+        await this.sendMessage(ctx2, header.id, { status: 200 })
+        ctx2.cancel()
         break
+      }
       case 'ALARM_CANCELED':
-      case 'ALARM_EXPIRED':
+      case 'ALARM_EXPIRED': {
         if (typeof body.id !== 'number') {
           console.error('Invalid type of field `id`')
           break
         }
         this.emit(header.tag === 'ALARM_CANCELED' ? 'cancelalarm' : 'expirealarm', body.id)
-        await this.sendMessage(header.id, { status: 200 })
+        const ctx2 = this.makeMessageContext(ctx)
+        await this.sendMessage(ctx2, header.id, { status: 200 })
+        ctx2.cancel()
         break
-      case 'ALARMS_DISMISSED':
+      }
+      case 'ALARMS_DISMISSED': {
         if (!Array.isArray(body.ids) || body.ids.some((id) => typeof id !== 'number')) {
           console.error('Invalid type of field `id`')
           break
         }
         this.emit('alarmsdismissed', body.ids)
-        await this.sendMessage(header.id, { status: 200 })
+        const ctx2 = this.makeMessageContext(ctx)
+        await this.sendMessage(ctx2, header.id, { status: 200 })
+        ctx2.cancel()
         break
+      }
       default:
         console.log(tuple)
     }
   }
 
-  async createAlarm(expiryTime: Date, startedAt: Date, name?: string) {
-    return await this.asyncSendMessage('CREATE_ALARM', {
+  private makeMessageContext<T, U = never>(ctx: Context<T>): Context<T | U | 'timeout'> {
+    const ctx2 = Context.withTimeout<T, U>(this.messageTimeoutMs, ctx)
+    ctx2.onTimeout(() => {
+      console.error('Message timed out')
+    })
+    return ctx2
+  }
+
+  private async asyncSendMessageDefaultTimeout<T>(
+    ctx: Context<T>,
+    tagOrReplyId: Tag | number,
+    obj: MessageBody,
+  ): Promise<[MessageHeader, MessageBody] | Error | Abort<T | 'timeout'>> {
+    const ctx2 = this.makeMessageContext(ctx)
+    const ret = await this.asyncSendMessage(ctx2, tagOrReplyId, obj)
+    ctx2.cancel()
+    return ret
+  }
+
+  async createAlarm<T>(
+    ctx: Context<T>,
+    expiryTime: Date,
+    startedAt: Date,
+    name?: string,
+  ): Promise<[MessageHeader, MessageBody] | Error | Abort<'timeout' | T>> {
+    return await this.asyncSendMessageDefaultTimeout(ctx, 'CREATE_ALARM', {
       name: name,
       expiryTime: expiryTime,
       startedAt: startedAt,
     })
   }
 
-  async cancelAlarm(id: number) {
-    return await this.asyncSendMessage('CANCEL_ALARM', {
+  async cancelAlarm<T>(
+    ctx: Context<T>,
+    id: number,
+  ): Promise<[MessageHeader, MessageBody] | Error | Abort<'timeout' | T>> {
+    return await this.asyncSendMessageDefaultTimeout(ctx, 'CANCEL_ALARM', {
       id: id,
     })
   }
 
-  async dismissAlarms(ids: number[]) {
-    return await this.asyncSendMessage('DISMISS_ALARMS', {
+  async dismissAlarms<T>(
+    ctx: Context<T>,
+    ids: number[],
+  ): Promise<[MessageHeader, MessageBody] | Error | Abort<'timeout' | T>> {
+    return await this.asyncSendMessageDefaultTimeout(ctx, 'DISMISS_ALARMS', {
       ids: ids,
     })
   }
 
-  async subscribe() {
-    return await this.asyncSendMessage('SUBSCRIBE', {})
+  async subscribe<T>(
+    ctx: Context<T>,
+  ): Promise<Error | [MessageHeader, MessageBody] | Abort<T | 'timeout'>> {
+    return await this.asyncSendMessageDefaultTimeout(ctx, 'SUBSCRIBE', {})
   }
 
   addEventListener<T extends ConnectionEventType>(
@@ -300,7 +353,7 @@ export class Connection {
     let resReconnecting: (_: undefined) => void
     this.reconnecting = new Promise<undefined>((res_) => (resReconnecting = res_))
     socket.addEventListener('open', async (event) => res(true))
-    socket.addEventListener('message', (event) => this.handleMessage(event))
+    socket.addEventListener('message', (event) => this.handleMessage(Context.background(), event))
     socket.addEventListener('close', (event) => {
       if (event.code !== 1000) {
         console.log('Connection closed: ' + event.reason)
@@ -324,15 +377,27 @@ export class Connection {
     return
   }
 
-  static getInstance(): Promise<Connection> {
-    if (Connection.instance) {
-      return Connection.instance
+  static async getConnectedInstance<T>(ctx: Context<T>): Promise<Connection | Error | Abort<T>> {
+    const awaited = await Promise.race([Connection.connectedInstance, ctx.reason])
+    if (awaited instanceof Connection) {
+      return awaited
     }
-    const c = new Connection(null, new Map())
-    Connection.instance = new Promise(async (res) => {
-      await c.reconnect()
-      res(c)
+    const c = Connection.getInstance()
+    Connection.connectedInstance = new Promise<Error | Connection>(async (res) => {
+      const r = await c.reconnect()
+      if (r instanceof Error) {
+        res(r)
+      } else {
+        res(c)
+      }
     })
+    return Promise.race([Connection.connectedInstance, ctx.reason])
+  }
+
+  static getInstance(): Connection {
+    if (!Connection.instance) {
+      Connection.instance = new Connection(null, new Map())
+    }
     return Connection.instance
   }
 }

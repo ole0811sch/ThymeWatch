@@ -7,7 +7,8 @@ import {
   pauseCountdown,
   type Countdown,
 } from './countdowns'
-import { Connection } from './connection';
+import { Connection } from './connection'
+import { Abort, Context } from './context'
 const { countdown, detailsName } = defineProps<{ countdown: Countdown; detailsName: string }>()
 
 const displayText = ref('')
@@ -15,6 +16,7 @@ const isPaused = ref(countdown.pausedAt !== undefined)
 const isExpired = ref(countdown.expired)
 const details = useTemplateRef('details')
 const detailsContent = useTemplateRef('details-content')
+const ctx = Context.background()
 
 function update() {
   if (!countdown.expiryTimestamp) {
@@ -49,9 +51,12 @@ countdownEventTarget.addEventListener('continued', onContinued, { countdownId: c
 const removing = ref(false)
 
 const onRequestRemove = async () => {
-  removing.value = true;
-  await (await Connection.getInstance()).cancelAlarm(countdown.id)
+  removing.value = true
+  const ctx2 = Context.withTimeout(5000, ctx)
+  const conn = Connection.getInstance()
+  conn.cancelAlarm(ctx2, countdown.id)
   removing.value = false
+  ctx2.cancel()
 }
 
 const onRequestTogglePause = () => {
@@ -63,10 +68,7 @@ const onRequestTogglePause = () => {
 }
 
 const handlerTargetOutisdeDetails = (e: Event) => {
-  if (
-    (e.target instanceof Node && details.value?.contains(e.target)) ||
-    details.value === null
-  ) {
+  if ((e.target instanceof Node && details.value?.contains(e.target)) || details.value === null) {
     return
   }
   details.value.open = false
@@ -93,6 +95,7 @@ const onDetailsToggle = (e: ToggleEvent) => {
 update()
 
 onUnmounted(() => {
+  ctx.abort()
   countdownEventTarget.removeEventListener('expired', onExpired, { countdownId: countdown.id })
   countdownEventTarget.removeEventListener('paused', onPaused, { countdownId: countdown.id })
   countdownEventTarget.removeEventListener('continued', onContinued, { countdownId: countdown.id })
