@@ -264,30 +264,34 @@ func makeUserData() UserData {
 	}
 }
 
-func SendAlarmsToClient(ctx context.Context, info *MyClientInfo, alarms []*StoredAlarm, ketchup bool) {
-	SendMessageToClient(ctx, info, Some("NOTIFY_ALARM"), Optional[float64]{}, NotifyAlarmMessage{alarms, ketchup})
+func SendAlarmsToClient(ctx context.Context, info *MyClientInfo, alarms []*StoredAlarm, ketchup bool) error {
+	_, err := SendMessageToClient(ctx, info, Some("NOTIFY_ALARM"), Optional[float64]{}, NotifyAlarmMessage{alarms, ketchup})
+	return err
 }
 
-func SendCanceledAlarmToClient(ctx context.Context, info *MyClientInfo, alarmId float64) {
-	SendMessageToClient(ctx, info, Some("ALARM_CANCELED"), Optional[float64]{}, AlarmCanceledMessage{Id: alarmId})
+func SendCanceledAlarmToClient(ctx context.Context, info *MyClientInfo, alarmId float64) error {
+	_, err := SendMessageToClient(ctx, info, Some("ALARM_CANCELED"), Optional[float64]{}, AlarmCanceledMessage{Id: alarmId})
+	return err
 }
 
-func SendExpiredAlarmToClient(ctx context.Context, info *MyClientInfo, alarmId float64) {
-	SendMessageToClient(ctx, info, Some("ALARM_EXPIRED"), Optional[float64]{}, AlarmExpiredMessage{Id: alarmId})
+func SendExpiredAlarmToClient(ctx context.Context, info *MyClientInfo, alarmId float64) error {
+	_, err := SendMessageToClient(ctx, info, Some("ALARM_EXPIRED"), Optional[float64]{}, AlarmExpiredMessage{Id: alarmId})
+	return err
 }
 
-func SendAlarmsDismissedToClient(ctx context.Context, info *MyClientInfo, ids []float64) {
-	SendMessageToClient(ctx, info, Some("ALARMS_DISMISSED"), Optional[float64]{}, AlarmsDismissedMessage{Ids: ids})
+func SendAlarmsDismissedToClient(ctx context.Context, info *MyClientInfo, ids []float64) error {
+	_, err := SendMessageToClient(ctx, info, Some("ALARMS_DISMISSED"), Optional[float64]{}, AlarmsDismissedMessage{Ids: ids})
+	return err
 }
 
-func SendAlarmPausedToClient(ctx context.Context, info *MyClientInfo, id float64, pausedAtTime time.Time) {
-	SendMessageToClient(ctx, info, Some("ALARM_PAUSED"), Optional[float64]{},
-		AlarmPausedMessage{Id: id, PausedAtTime: pausedAtTime})
+func SendAlarmPausedToClient(ctx context.Context, info *MyClientInfo, id float64, pausedAtTime time.Time) error {
+	_, err := SendMessageToClient(ctx, info, Some("ALARM_PAUSED"), Optional[float64]{}, AlarmPausedMessage{Id: id, PausedAtTime: pausedAtTime})
+	return err
 }
 
-func SendAlarmContinuedToClient(ctx context.Context, info *MyClientInfo, id float64, newExpiryTime time.Time) {
-	SendMessageToClient(ctx, info, Some("ALARM_CONTINUED"), Optional[float64]{},
-		AlarmContinuedMessage{Id: id, NewExpiryTime: newExpiryTime})
+func SendAlarmContinuedToClient(ctx context.Context, info *MyClientInfo, id float64, newExpiryTime time.Time) error {
+	_, err := SendMessageToClient(ctx, info, Some("ALARM_CONTINUED"), Optional[float64]{}, AlarmContinuedMessage{Id: id, NewExpiryTime: newExpiryTime})
+	return err
 }
 
 func (ud *UserData) startAlarm(ctx context.Context, alarm *StoredAlarm) {
@@ -329,7 +333,10 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) floa
 		value.alarmId++
 		ud.startAlarm(ctx, newStoredAlarm)
 		for info := range value.subscribers {
-			SendAlarmsToClient(ctx, info, []*StoredAlarm{newStoredAlarm}, false)
+			err := SendAlarmsToClient(ctx, info, []*StoredAlarm{newStoredAlarm}, false)
+			if err != nil {
+				fmt.Println("Could not notify of new alarm: ", err)
+			}
 			if ctx.Err() != nil {
 				return newStoredAlarm.Id
 			}
@@ -351,9 +358,9 @@ func (ud *UserData) registerSubscriber(ctx context.Context, client *MyClientInfo
 			}
 			return 1
 		})
-		SendAlarmsToClient(ctx, client, slice, true)
-		if ctx.Err() != nil {
-			return
+		err := SendAlarmsToClient(ctx, client, slice, true)
+		if err != nil {
+			fmt.Println("Could not send alarms to new subscriber: ", err)
 		}
 	})
 }
@@ -368,7 +375,10 @@ func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) {
 	ud.lb.Write(func(value *UserDataContent) {
 		value.expiredAlarms = append(value.expiredAlarms, alarmId)
 		for info := range value.subscribers {
-			SendExpiredAlarmToClient(ctx, info, alarmId)
+			err := SendExpiredAlarmToClient(ctx, info, alarmId)
+			if err != nil {
+				fmt.Println("Could not send alarm expiration to client: ", err)
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -385,7 +395,10 @@ func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) {
 			ids = value.expiredAlarms
 		}
 		for info := range value.subscribers {
-			SendAlarmsDismissedToClient(ctx, info, ids)
+			err := SendAlarmsDismissedToClient(ctx, info, ids)
+			if err != nil {
+				fmt.Println("Could not send alarm dismissal to client: ", err)
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -410,7 +423,10 @@ func (ud *UserData) pauseAlarm(ctx context.Context, pauseId float64) {
 		storedAlarm.PausedAtTime = Some(pausedAtTime)
 		ud.stopAlarm(storedAlarm)
 		for info := range udc.subscribers {
-			SendAlarmPausedToClient(ctx, info, pauseId, pausedAtTime)
+			err := SendAlarmPausedToClient(ctx, info, pauseId, pausedAtTime)
+			if err != nil {
+				fmt.Println("Could not send alarm pausing to client: ", err)
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -438,7 +454,10 @@ func (ud *UserData) continueAlarm(ctx context.Context, continueId float64) {
 		storedAlarm.Spec.ExpiryTime = storedAlarm.Spec.ExpiryTime.Add(pausedDuration)
 		ud.startAlarm(ctx, storedAlarm)
 		for info := range udc.subscribers {
-			SendAlarmContinuedToClient(ctx, info, continueId, storedAlarm.Spec.ExpiryTime)
+			err := SendAlarmContinuedToClient(ctx, info, continueId, storedAlarm.Spec.ExpiryTime)
+			if err != nil {
+				fmt.Println("Could not send alarm continuation to client: ", err)
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -454,7 +473,10 @@ func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) {
 			return
 		}
 		for info := range udc.subscribers {
-			SendCanceledAlarmToClient(ctx, info, cancelId)
+			err := SendCanceledAlarmToClient(ctx, info, cancelId)
+			if err != nil {
+				fmt.Println("Could not send alarm cancelation to client: ", err)
+			}
 			if ctx.Err() != nil {
 				return
 			}

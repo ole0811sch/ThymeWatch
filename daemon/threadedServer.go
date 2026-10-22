@@ -44,11 +44,18 @@ type OutChanItem struct {
 
 type ClientInfo[T any] struct {
 	hub            *Hub[T]
-	idChan         <-chan float64
-	outChan        chan OutChanItem
+	currId         Lockbox[float64]
 	conn           *websocket.Conn
 	isUnregistered *atomic.Bool
 	cancel         context.CancelFunc
+}
+
+func (c *ClientInfo[T]) ObtainId() float64 {
+	return c.currId.WriteReturning(func(value *float64) float64 {
+		ret := (*value)
+		*value++
+		return ret
+	})
 }
 
 type HubIsClosedError struct{}
@@ -76,25 +83,13 @@ func Some[T any](value T) Optional[T] {
 	return Optional[T]{value: value, present: true}
 }
 
-// returns id, ctx.Err()
 func SendMessageToClient[T any](ctx context.Context, info *ClientInfo[T], tag Optional[string], inReplyTo Optional[float64], body any) (float64, error) {
-	var id float64
-	select {
-	case <-ctx.Done():
-		return id, ctx.Err()
-	case id = <-info.idChan:
-	}
 	header := MessageHeader{
-		Id:        id,
+		Id:        info.ObtainId(),
 		InReplyTo: inReplyTo,
 		Tag:       tag,
 	}
-	select {
-	case <-ctx.Done():
-		return id, ctx.Err()
-	case info.outChan <- OutChanItem{header: header, body: body}:
-	}
-	return id, nil
+	return header.Id, info.Send(ctx, header, body)
 }
 
 func (h *Hub[T]) Register(c *ClientInfo[T]) error {
@@ -210,47 +205,33 @@ func (h *Hub[T]) RegisterHandler(tag string, handler HandlerFunc[T]) error {
 	})
 }
 
-func handleOutgoingMessages[T any](ctx context.Context, info *ClientInfo[T]) {
-	err := func() error {
-		for {
-			fmt.Println("Reading outChan")
-			select {
-			case <-ctx.Done():
-				return nil
-			case event := <-info.outChan:
-				sHeader, err := json.Marshal(event.header)
-				if err != nil {
-					return err
-				}
-				_ = sHeader
-				sBody, err := json.Marshal(event.body)
-				if err != nil {
-					return err
-				}
-				_ = sBody
-				writer, err := info.conn.Writer(ctx, websocket.MessageText)
-				if err != nil {
-					return err
-				}
-				defer writer.Close()
-				for _, msg := range [][]byte{sHeader, {'\n'}, sBody} {
-					_, err = writer.Write(msg)
-					if err != nil {
-						return err
-					}
-				}
-				err = writer.Close()
-				if err != nil {
-					return err
-				}
-			}
-		}
-	}()
+func (info *ClientInfo[T]) Send(ctx context.Context, header MessageHeader, body any) error {
+	sHeader, err := json.Marshal(header)
 	if err != nil {
-		fmt.Println(err)
-		info.cancel()
+		return err
 	}
-	fmt.Println("Close outgoing messages")
+	_ = sHeader
+	sBody, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	_ = sBody
+	writer, err := info.conn.Writer(ctx, websocket.MessageText)
+	if err != nil {
+		return err
+	}
+	defer writer.Close()
+	for _, msg := range [][]byte{sHeader, {'\n'}, sBody} {
+		_, err = writer.Write(msg)
+		if err != nil {
+			return err
+		}
+	}
+	err = writer.Close()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (hd *HandlerData[T]) sendOnThread(ctx context.Context, body any, err error, inReplyTo float64) {
@@ -315,18 +296,14 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 
 	idChan := make(chan float64)
-	outChan := make(chan OutChanItem)
 	isUnregistered := atomic.Bool{}
 	info := &ClientInfo[T]{
 		hub:            hub,
-		idChan:         idChan,
-		outChan:        outChan,
 		conn:           conn,
 		isUnregistered: &isUnregistered,
 		cancel:         cancel,
 	}
 	go handleIdDistribution(ctx, idChan)
-	go handleOutgoingMessages(ctx, info)
 
 	hub.Register(info)
 	closeWithError := func(status websocket.StatusCode, reason string) {
