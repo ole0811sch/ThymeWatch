@@ -8,7 +8,6 @@ import (
 	"maps"
 	"net/http"
 	"slices"
-	"sync"
 	"sync/atomic"
 
 	"github.com/coder/websocket"
@@ -343,7 +342,7 @@ func handleOutgoingMessages(ctx context.Context, info *ClientInfo) {
 	fmt.Println("Close outgoing messages")
 }
 
-func handleThreadMessages(ctx context.Context, info *ClientInfo, handlerData *HandlerData, threads *OpenThreads) {
+func handleThreadMessages(ctx context.Context, info *ClientInfo, handlerData *HandlerData, threads *Lockbox[OpenThreads]) {
 	var event Triple[any, float64, bool]
 	select {
 	case <-ctx.Done():
@@ -366,9 +365,9 @@ func handleThreadMessages(ctx context.Context, info *ClientInfo, handlerData *Ha
 		return // ctx is done
 	}
 
-	WithLock(&threads.mutex, func() {
-		threads.msgIdToHandlerData[id] = handlerData
-		threads.handlerDataToMsgId[handlerData] = id
+	threads.Write(func(t *OpenThreads) {
+		t.msgIdToHandlerData[id] = handlerData
+		t.handlerDataToMsgId[handlerData] = id
 	})
 }
 
@@ -398,7 +397,6 @@ func closeWithError(status websocket.StatusCode, reason string, info *ClientInfo
 type OpenThreads struct {
 	msgIdToHandlerData map[float64]*HandlerData
 	handlerDataToMsgId map[*HandlerData]float64
-	mutex              sync.RWMutex
 }
 
 func handleWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
@@ -431,10 +429,10 @@ func handleWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		closeWithError(status, reason, info)
 	}
 	defer closeWithError(websocket.StatusNormalClosure, "")
-	openThreads := OpenThreads{
+	openThreads := MakeLockbox(OpenThreads{
 		msgIdToHandlerData: make(map[float64]*HandlerData),
 		handlerDataToMsgId: make(map[*HandlerData]float64),
-	}
+	})
 
 	for {
 		ctx2, cancel2 := context.WithCancel(ctx)
@@ -475,20 +473,20 @@ func handleWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 				}
 				go handleThreadMessages(ctx, info, handlerData, &openThreads)
 				handlerFn(handlerData, ctx, msg[endHeader+1:], MakeSender(&handlerData.channels, header.Id))
-				WithLock(&openThreads.mutex, func() {
-					id := openThreads.handlerDataToMsgId[handlerData]
-					l1 := len(openThreads.handlerDataToMsgId)
-					delete(openThreads.handlerDataToMsgId, handlerData)
-					if len(openThreads.handlerDataToMsgId) < l1 {
-						delete(openThreads.msgIdToHandlerData, id)
+				openThreads.Write(func(t *OpenThreads) {
+					id := t.handlerDataToMsgId[handlerData]
+					l1 := len(t.handlerDataToMsgId)
+					delete(t.handlerDataToMsgId, handlerData)
+					if len(t.handlerDataToMsgId) < l1 {
+						delete(t.msgIdToHandlerData, id)
 					}
 				})
 			}()
 		} else {
-			data := WithLockReturning(&openThreads.mutex, func() *HandlerData {
-				data := openThreads.msgIdToHandlerData[header.InReplyTo.value]
-				delete(openThreads.msgIdToHandlerData, header.InReplyTo.value)
-				delete(openThreads.handlerDataToMsgId, data)
+			data := openThreads.WriteReturning(func(t *OpenThreads) *HandlerData {
+				data := t.msgIdToHandlerData[header.InReplyTo.value]
+				delete(t.msgIdToHandlerData, header.InReplyTo.value)
+				delete(t.handlerDataToMsgId, data)
 				return data
 			})
 			if data == nil {
