@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"sync/atomic"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -21,6 +22,8 @@ type Hub[T any] struct {
 	On         struct {
 		Unregistered func(e UnregisterItem[T])
 	}
+	// negative for no timeout
+	threadTimeout time.Duration
 }
 
 type UnregisterItem[T any] struct {
@@ -45,11 +48,12 @@ type ClientInfo[T any] struct {
 
 func newHub[T any](userData T) *Hub[T] {
 	return &Hub[T]{
-		handlers:   make(map[string]HandlerFunc[T]),
-		clients:    make(map[*ClientInfo[T]]bool),
-		register:   make(chan *ClientInfo[T]),
-		unregister: make(chan UnregisterItem[T]),
-		UserData:   userData,
+		handlers:      make(map[string]HandlerFunc[T]),
+		clients:       make(map[*ClientInfo[T]]bool),
+		register:      make(chan *ClientInfo[T]),
+		unregister:    make(chan UnregisterItem[T]),
+		UserData:      userData,
+		threadTimeout: -1,
 	}
 }
 
@@ -346,8 +350,10 @@ func (hub *Hub[T]) handleWS(w http.ResponseWriter, r *http.Request) {
 						out: make(chan Triple[any, float64, bool]),
 					},
 				}
-				go handleThreadMessages(ctx, info, handlerData, &openThreads)
-				handlerFn(handlerData, ctx, msg[endHeader+1:], MakeSender(&handlerData.channels, header.Id))
+				ctx3, cancel3 := context.WithTimeout(ctx, hub.threadTimeout)
+				go handleThreadMessages(ctx3, info, handlerData, &openThreads)
+				handlerFn(handlerData, ctx3, msg[endHeader+1:], MakeSender(&handlerData.channels, header.Id))
+				cancel3()
 				openThreads.Write(func(t *OpenThreads[T]) {
 					id := t.handlerDataToMsgId[handlerData]
 					l1 := len(t.handlerDataToMsgId)

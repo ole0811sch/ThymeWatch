@@ -478,6 +478,7 @@ func main() {
 	defer stop()
 
 	hub := newHub(makeUserData())
+	hub.threadTimeout = time.Second * 5
 	registerHandlers(hub)
 	hub.On.Unregistered = func(e UnregisterItem[UserData]) {
 		hub.UserData.unregisterSubscriber <- e.info
