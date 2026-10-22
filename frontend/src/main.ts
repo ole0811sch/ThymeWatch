@@ -6,7 +6,6 @@ import {
   continueCountdown,
   countdownEventTarget,
   expireCountdown,
-  getCountdowns,
   pauseCountdown,
   removeAllCountdown,
   removeCountdown,
@@ -42,7 +41,16 @@ conn.addEventListener('reconnected', trySubscribe)
 conn.addEventListener('ketchup', () => void removeAllCountdown())
 conn.addEventListener(
   'setalarm',
-  ({ expiryTime, name, id, startedAt, originalExpiryTime, pausedAtTime }) => {
+  ({
+    expiryTime,
+    name,
+    id,
+    startedAt,
+    originalExpiryTime,
+    pausedAtTime,
+    isExpired,
+    isDismissed,
+  }) => {
     addCountdown({
       expiryTimestamp: expiryTime,
       startedAt,
@@ -50,6 +58,8 @@ conn.addEventListener(
       id,
       originalExpiryTimestamp: originalExpiryTime,
       pausedAtTime,
+      isExpired: isExpired,
+      isDismissed: isDismissed,
     })
   },
 )
@@ -95,6 +105,9 @@ if (conn.state === 'closed') {
 }
 
 const onExpired = async (countdown: Countdown) => {
+  if (countdown.isDismissed) {
+    return
+  }
   const title = countdown.name ? `Timer expired: ${countdown.name}` : 'Timer expired'
   await audio.start()
   if (Notification.permission === 'granted') {

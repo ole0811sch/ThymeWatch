@@ -61,6 +61,8 @@ export type ConnectionEventMap = {
     ketchup: boolean
     pausedAtTime: Date | null
     originalExpiryTime: Date
+    isExpired: boolean
+    isDismissed: boolean
   }
   cancelalarm: number
   expirealarm: number
@@ -204,6 +206,8 @@ export class Connection {
             if (
               typeof alarm.id !== 'number' ||
               typeof alarm.spec !== 'object' ||
+              typeof alarm.isExpired !== 'boolean' ||
+              typeof alarm.isDismissed !== 'boolean' ||
               (alarm.spec.name !== undefined && typeof alarm.spec.name !== 'string') ||
               typeof alarm.spec.expiryTime !== 'string' ||
               typeof alarm.spec.startedAt !== 'string'
@@ -241,6 +245,8 @@ export class Connection {
             id: body.alarms[i].id,
             startedAt: startedAts[i]!,
             ketchup: body.ketchup,
+            isExpired: body.alarms[i].isExpired,
+            isDismissed: body.alarms[i].isDismissed,
             originalExpiryTime: originalExpiryTimes[i]!,
             pausedAtTime: pausedAtTimes[i]!,
           })

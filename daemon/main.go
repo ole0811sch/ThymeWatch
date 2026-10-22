@@ -160,6 +160,8 @@ type StoredAlarm struct {
 	Id                 float64             `json:"id"`
 	OriginalExpiryTime time.Time           `json:"originalExpiryTime"`
 	PausedAtTime       Optional[time.Time] `json:"pausedAtTime"`
+	IsExpired          bool                `json:"isExpired"`
+	IsDismissed        bool                `json:"isDismissed"`
 	cancel             context.CancelFunc
 }
 
@@ -328,6 +330,8 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) floa
 			Id:                 value.alarmId,
 			OriginalExpiryTime: spec.ExpiryTime,
 			PausedAtTime:       Optional[time.Time]{},
+			IsExpired:          false,
+			IsDismissed:        false,
 		}
 		value.alarms[value.alarmId] = newStoredAlarm
 		value.alarmId++
@@ -373,6 +377,11 @@ func (ud *UserData) unregisterSubscriber(client *MyClientInfo) {
 
 func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) {
 	ud.lb.Write(func(value *UserDataContent) {
+		alarm, exists := value.alarms[alarmId]
+		if !exists {
+			return
+		}
+		alarm.IsExpired = true
 		value.expiredAlarms = append(value.expiredAlarms, alarmId)
 		for info := range value.subscribers {
 			err := SendExpiredAlarmToClient(ctx, info, alarmId)
@@ -386,13 +395,20 @@ func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) {
 	})
 }
 
-/**
- * If ids is empty, dismisses all expired alarms
- */
+// If ids is empty, dismisses all expired alarms
 func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) {
 	ud.lb.Write(func(value *UserDataContent) {
 		if len(ids) == 0 {
 			ids = value.expiredAlarms
+		}
+		for i := 0; i < len(ids); i++ {
+			alarm, exists := value.alarms[ids[i]]
+			if !exists || alarm.IsDismissed || !alarm.IsExpired {
+				ids[i] = ids[len(ids)-1]
+				ids = ids[:len(ids)-1]
+				continue
+			}
+			alarm.IsExpired = true
 		}
 		for info := range value.subscribers {
 			err := SendAlarmsDismissedToClient(ctx, info, ids)

@@ -1,13 +1,12 @@
-export interface CountdownInput {
+export interface Countdown {
   startedAt: Date
   expiryTimestamp: Date
   originalExpiryTimestamp: Date
   name?: string
   id: number
   pausedAtTime: Date | null
-}
-export interface Countdown extends CountdownInput {
-  expired?: boolean
+  isExpired: boolean
+  isDismissed: boolean
 }
 
 const countdowns: Map<number, Countdown> = new Map()
@@ -19,7 +18,7 @@ export function getCountdowns(): Map<number, Countdown> {
   return new Map(countdowns)
 }
 
-export function addCountdown(cd: CountdownInput): Countdown {
+export function addCountdown(cd: Countdown): Countdown {
   const cdFull: Countdown = { ...cd }
   countdowns.set(cdFull.id, cdFull)
   handler('new', cdFull)
@@ -56,7 +55,7 @@ export function removeAllCountdown(): void {
 
 export function pauseCountdown(id: number, pausedAtTime: Date): void {
   const cd = countdowns.get(id)
-  if (!cd || cd.expired) {
+  if (!cd || cd.isExpired) {
     return
   }
 
@@ -66,7 +65,7 @@ export function pauseCountdown(id: number, pausedAtTime: Date): void {
 
 export function continueCountdown(id: number, newExpiryTime: Date): void {
   const cd = countdowns.get(id)
-  if (!cd || cd.expired) {
+  if (!cd || cd.isExpired) {
     return
   }
 
@@ -77,11 +76,11 @@ export function continueCountdown(id: number, newExpiryTime: Date): void {
 
 export function expireCountdown(id: number): void {
   const cd = countdowns.get(id)
-  if (!cd || cd.expired) {
+  if (!cd || cd.isExpired) {
     return
   }
 
-  cd.expired = true
+  cd.isExpired = true
   handler('expired', cd)
 }
 

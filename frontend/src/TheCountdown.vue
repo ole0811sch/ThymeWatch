@@ -10,7 +10,7 @@ const { countdown, detailsName } = defineProps<{ countdown: Countdown; detailsNa
 
 const displayText = ref('')
 const isPaused = ref(countdown.pausedAtTime !== null)
-const isExpired = ref(countdown.expired)
+const isExpired = ref(countdown.isExpired)
 const details = useTemplateRef('details')
 const ctx = Context.background()
 
