@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"log"
-	"maps"
 	"net/http"
 	"slices"
 	"sync/atomic"
@@ -13,24 +12,19 @@ import (
 	"github.com/coder/websocket"
 )
 
-type Hub struct {
-	handlers           map[string]HandlerFunc
-	clients            map[*ClientInfo]bool
-	subscribers        map[*ClientInfo]bool
-	expiredAlarms      []float64
-	newAlarm           chan AlarmSpecification
-	newAlarmRes        chan float64
-	register           chan *ClientInfo
-	unregister         chan UnregisterItem
-	registerSubscriber chan *ClientInfo
-	alarmId            float64
-	cancelAlarm        chan float64
-	expiredAlarm       chan float64
-	dismissAlarms      chan []float64
+type Hub[T any] struct {
+	handlers   map[string]HandlerFunc[T]
+	clients    map[*ClientInfo[T]]bool
+	register   chan *ClientInfo[T]
+	unregister chan UnregisterItem[T]
+	UserData   T
+	On         struct {
+		Unregistered func(e UnregisterItem[T])
+	}
 }
 
-type UnregisterItem struct {
-	info   *ClientInfo
+type UnregisterItem[T any] struct {
+	info   *ClientInfo[T]
 	status websocket.StatusCode
 	reason string
 }
@@ -40,8 +34,8 @@ type OutChanItem struct {
 	header MessageHeader
 }
 
-type ClientInfo struct {
-	hub            *Hub
+type ClientInfo[T any] struct {
+	hub            *Hub[T]
 	idChan         <-chan float64
 	outChan        chan OutChanItem
 	conn           *websocket.Conn
@@ -49,44 +43,13 @@ type ClientInfo struct {
 	cancel         context.CancelFunc
 }
 
-type NotifyAlarmMessage struct {
-	Alarms  []StoredAlarm `json:"alarms"`
-	Ketchup bool          `json:"ketchup"`
-}
-
-type AlarmCanceledMessage struct {
-	Id float64 `json:"id"`
-}
-
-type AlarmExpiredMessage struct {
-	Id float64 `json:"id"`
-}
-
-type AlarmsDismissedMessage struct {
-	Ids []float64 `json:"ids"`
-}
-
-type StoredAlarm struct {
-	Spec   AlarmSpecification `json:"spec"`
-	Id     float64            `json:"id"`
-	cancel context.CancelFunc
-}
-
-var alarms map[float64]StoredAlarm = make(map[float64]StoredAlarm)
-
-func newHub() *Hub {
-	return &Hub{
-		handlers:           make(map[string]HandlerFunc),
-		clients:            make(map[*ClientInfo]bool),
-		subscribers:        make(map[*ClientInfo]bool),
-		newAlarm:           make(chan AlarmSpecification),
-		newAlarmRes:        make(chan float64),
-		register:           make(chan *ClientInfo),
-		unregister:         make(chan UnregisterItem),
-		registerSubscriber: make(chan *ClientInfo),
-		cancelAlarm:        make(chan float64),
-		expiredAlarm:       make(chan float64),
-		dismissAlarms:      make(chan []float64),
+func newHub[T any](userData T) *Hub[T] {
+	return &Hub[T]{
+		handlers:   make(map[string]HandlerFunc[T]),
+		clients:    make(map[*ClientInfo[T]]bool),
+		register:   make(chan *ClientInfo[T]),
+		unregister: make(chan UnregisterItem[T]),
+		UserData:   userData,
 	}
 }
 
@@ -94,12 +57,8 @@ func Some[T any](value T) Optional[T] {
 	return Optional[T]{value: value, present: true}
 }
 
-func SendAlarmsToClient(ctx context.Context, info *ClientInfo, alarms []StoredAlarm, ketchup bool) {
-	SendMessageToClient(ctx, info, Some("NOTIFY_ALARM"), Optional[float64]{}, NotifyAlarmMessage{alarms, ketchup})
-}
-
 // returns id, ctx.Err()
-func SendMessageToClient(ctx context.Context, info *ClientInfo, tag Optional[string], inReplyTo Optional[float64], body any) (float64, error) {
+func SendMessageToClient[T any](ctx context.Context, info *ClientInfo[T], tag Optional[string], inReplyTo Optional[float64], body any) (float64, error) {
 	var id float64
 	select {
 	case <-ctx.Done():
@@ -119,19 +78,7 @@ func SendMessageToClient(ctx context.Context, info *ClientInfo, tag Optional[str
 	return id, nil
 }
 
-func SendCanceledAlarmToClient(ctx context.Context, info *ClientInfo, alarmId float64) {
-	SendMessageToClient(ctx, info, Some("ALARM_CANCELED"), Optional[float64]{}, AlarmCanceledMessage{Id: alarmId})
-}
-
-func SendExpiredAlarmToClient(ctx context.Context, info *ClientInfo, alarmId float64) {
-	SendMessageToClient(ctx, info, Some("ALARM_EXPIRED"), Optional[float64]{}, AlarmExpiredMessage{Id: alarmId})
-}
-
-func SendAlarmsDismissedToClient(ctx context.Context, info *ClientInfo, ids []float64) {
-	SendMessageToClient(ctx, info, Some("ALARMS_DISMISSED"), Optional[float64]{}, AlarmsDismissedMessage{Ids: ids})
-}
-
-func (h *Hub) run(ctx context.Context) {
+func (h *Hub[T]) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -143,85 +90,12 @@ func (h *Hub) run(ctx context.Context) {
 		case c := <-h.register:
 			fmt.Println("Hub: register")
 			h.clients[c] = true
-		case info := <-h.registerSubscriber:
-			fmt.Println("Hub: register subscriber")
-			h.subscribers[info] = true
-			slice := slices.Collect(maps.Values(alarms))
-			slices.SortFunc(slice, func(a StoredAlarm, b StoredAlarm) int {
-				if a.Spec.StartedAt.Before(b.Spec.StartedAt) {
-					return -1
-				}
-				if a.Spec.StartedAt.Equal(b.Spec.StartedAt) {
-					return 0
-				}
-				return 1
-			})
-			SendAlarmsToClient(ctx, info, slice, true)
-			if ctx.Err() != nil {
-				return
-			}
 		case item := <-h.unregister:
 			fmt.Println("Hub: unregister")
 			delete(h.clients, item.info)
-			delete(h.subscribers, item.info)
 			item.info.conn.Close(item.status, item.reason)
-		case newAlarm := <-h.newAlarm:
-			ctx2, cancel2 := context.WithDeadline(ctx, newAlarm.ExpiryTime)
-			newStoredAlarm := StoredAlarm{
-				Spec:   newAlarm,
-				Id:     h.alarmId,
-				cancel: cancel2,
-			}
-			alarms[h.alarmId] = newStoredAlarm
-			h.newAlarmRes <- h.alarmId
-			h.alarmId++
-			fmt.Println(h.subscribers)
-			for info := range h.subscribers {
-				SendAlarmsToClient(ctx, info, []StoredAlarm{newStoredAlarm}, false)
-				if ctx.Err() != nil {
-					return
-				}
-			}
-			go func() {
-				<-ctx2.Done()
-				if ctx.Err() != nil {
-					return
-				}
-				if ctx2.Err() == context.DeadlineExceeded {
-					// alarm must have expired, since only the new deadline triggered
-					h.expiredAlarm <- newStoredAlarm.Id
-				}
-			}()
-		case alarmId := <-h.expiredAlarm:
-			h.expiredAlarms = append(h.expiredAlarms, alarmId)
-			for info := range h.subscribers {
-				SendExpiredAlarmToClient(ctx, info, alarmId)
-				if ctx.Err() != nil {
-					return
-				}
-			}
-		case ids := <-h.dismissAlarms:
-			if len(ids) == 0 {
-				ids = h.expiredAlarms
-			}
-			for info := range h.subscribers {
-				SendAlarmsDismissedToClient(ctx, info, ids)
-				if ctx.Err() != nil {
-					return
-				}
-			}
-			h.expiredAlarms = nil
-		case canceledId := <-h.cancelAlarm:
-			l1 := len(alarms)
-			delete(alarms, canceledId)
-			if l1 == len(alarms) {
-				continue
-			}
-			for info := range h.subscribers {
-				SendCanceledAlarmToClient(ctx, info, canceledId)
-				if ctx.Err() != nil {
-					return
-				}
+			if h.On.Unregistered != nil {
+				go h.On.Unregistered(item)
 			}
 		}
 	}
@@ -234,9 +108,9 @@ type MessageHeader struct {
 	Id        float64           `json:"id"`
 }
 
-type HandlerData struct {
-	hub      *Hub
-	info     *ClientInfo
+type HandlerData[T any] struct {
+	hub      *Hub[T]
+	info     *ClientInfo[T]
 	channels HandlerChannels
 }
 
@@ -287,10 +161,10 @@ func MakeReceiver(channels *HandlerChannels) Receiver {
 	}
 }
 
-type HandlerFunc func(*HandlerData, context.Context, []byte, Responder)
+type HandlerFunc[T any] func(*HandlerData[T], context.Context, []byte, Responder)
 
 // calls must be synchronized
-func (h *Hub) RegisterHandler(tag string, handler HandlerFunc) error {
+func (h *Hub[T]) RegisterHandler(tag string, handler HandlerFunc[T]) error {
 	_, tagExistsAlready := h.handlers[tag]
 	if tagExistsAlready {
 		return fmt.Errorf("Handler for tag %v exists already", tag)
@@ -299,7 +173,7 @@ func (h *Hub) RegisterHandler(tag string, handler HandlerFunc) error {
 	return nil
 }
 
-func handleOutgoingMessages(ctx context.Context, info *ClientInfo) {
+func handleOutgoingMessages[T any](ctx context.Context, info *ClientInfo[T]) {
 	err := func() error {
 		for {
 			fmt.Println("Reading outChan")
@@ -342,7 +216,7 @@ func handleOutgoingMessages(ctx context.Context, info *ClientInfo) {
 	fmt.Println("Close outgoing messages")
 }
 
-func handleThreadMessages(ctx context.Context, info *ClientInfo, handlerData *HandlerData, threads *Lockbox[OpenThreads]) {
+func handleThreadMessages[T any](ctx context.Context, info *ClientInfo[T], handlerData *HandlerData[T], threads *Lockbox[OpenThreads[T]]) {
 	var event Triple[any, float64, bool]
 	select {
 	case <-ctx.Done():
@@ -365,7 +239,7 @@ func handleThreadMessages(ctx context.Context, info *ClientInfo, handlerData *Ha
 		return // ctx is done
 	}
 
-	threads.Write(func(t *OpenThreads) {
+	threads.Write(func(t *OpenThreads[T]) {
 		t.msgIdToHandlerData[id] = handlerData
 		t.handlerDataToMsgId[handlerData] = id
 	})
@@ -383,23 +257,23 @@ func handleIdDistribution(ctx context.Context, idChan chan float64) {
 	}
 }
 
-func closeWithError(status websocket.StatusCode, reason string, info *ClientInfo) {
+func closeWithError[T any](status websocket.StatusCode, reason string, info *ClientInfo[T]) {
 	if info.isUnregistered.Swap(true) {
 		return
 	}
 	if len(reason) > 125 {
 		reason = reason[:125]
 	}
-	info.hub.unregister <- UnregisterItem{info, status, reason}
+	info.hub.unregister <- UnregisterItem[T]{info, status, reason}
 	info.cancel()
 }
 
-type OpenThreads struct {
-	msgIdToHandlerData map[float64]*HandlerData
-	handlerDataToMsgId map[*HandlerData]float64
+type OpenThreads[T any] struct {
+	msgIdToHandlerData map[float64]*HandlerData[T]
+	handlerDataToMsgId map[*HandlerData[T]]float64
 }
 
-func handleWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
+func (hub *Hub[T]) handleWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"localhost:5173"},
 	})
@@ -413,7 +287,7 @@ func handleWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	idChan := make(chan float64)
 	outChan := make(chan OutChanItem)
 	isUnregistered := atomic.Bool{}
-	info := &ClientInfo{
+	info := &ClientInfo[T]{
 		hub:            hub,
 		idChan:         idChan,
 		outChan:        outChan,
@@ -429,9 +303,9 @@ func handleWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		closeWithError(status, reason, info)
 	}
 	defer closeWithError(websocket.StatusNormalClosure, "")
-	openThreads := MakeLockbox(OpenThreads{
-		msgIdToHandlerData: make(map[float64]*HandlerData),
-		handlerDataToMsgId: make(map[*HandlerData]float64),
+	openThreads := MakeLockbox(OpenThreads[T]{
+		msgIdToHandlerData: make(map[float64]*HandlerData[T]),
+		handlerDataToMsgId: make(map[*HandlerData[T]]float64),
 	})
 
 	for {
@@ -463,7 +337,7 @@ func handleWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			go func() {
-				handlerData := &HandlerData{
+				handlerData := &HandlerData[T]{
 					hub:  hub,
 					info: info,
 					channels: HandlerChannels{
@@ -473,7 +347,7 @@ func handleWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 				}
 				go handleThreadMessages(ctx, info, handlerData, &openThreads)
 				handlerFn(handlerData, ctx, msg[endHeader+1:], MakeSender(&handlerData.channels, header.Id))
-				openThreads.Write(func(t *OpenThreads) {
+				openThreads.Write(func(t *OpenThreads[T]) {
 					id := t.handlerDataToMsgId[handlerData]
 					l1 := len(t.handlerDataToMsgId)
 					delete(t.handlerDataToMsgId, handlerData)
@@ -483,7 +357,7 @@ func handleWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 				})
 			}()
 		} else {
-			data := openThreads.WriteReturning(func(t *OpenThreads) *HandlerData {
+			data := openThreads.WriteReturning(func(t *OpenThreads[T]) *HandlerData[T] {
 				data := t.msgIdToHandlerData[header.InReplyTo.value]
 				delete(t.msgIdToHandlerData, header.InReplyTo.value)
 				delete(t.handlerDataToMsgId, data)
