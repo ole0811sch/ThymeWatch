@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"log"
 	"maps"
@@ -14,9 +16,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 
 	"github.com/coder/websocket"
 )
@@ -48,6 +47,7 @@ type OutChanItem struct {
 }
 
 type ClientInfo struct {
+	hub            *Hub
 	idChan         <-chan float64
 	outChan        chan OutChanItem
 	conn           *websocket.Conn
@@ -232,17 +232,6 @@ func (h *Hub) run(ctx context.Context) {
 	}
 }
 
-func Unregister(ctx context.Context, info *ClientInfo, status websocket.StatusCode, reason string) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case hub.unregister <- UnregisterItem{info, status, reason}:
-		return nil
-	}
-}
-
-var hub *Hub = newHub()
-
 // Exactly one of Tag and InReplyTo should be zero
 type MessageHeader struct {
 	InReplyTo Optional[float64] `json:"inReplyTo"`
@@ -294,8 +283,7 @@ func ParseCreateAlarmMessage(bytes []byte) (CreateAlarmMessage, error) {
 	return message, err
 }
 
-type SubscribeMessage struct {
-}
+type SubscribeMessage struct{}
 
 func ParseSubscribeMessage(bytes []byte) (SubscribeMessage, error) {
 	var message SubscribeMessage
@@ -324,6 +312,7 @@ func ParseDismissAlarmsMessage(bytes []byte) (DismissAlarmsMessage, error) {
 }
 
 type HandlerData struct {
+	hub      *Hub
 	info     *ClientInfo
 	channels HandlerChannels
 }
@@ -335,8 +324,10 @@ type HandlerChannels struct {
 	out chan Triple[any, float64, bool]
 }
 
-type Responder func(context.Context, any, bool) (Receiver, error)
-type Receiver func(context.Context) ([]byte, Responder, error)
+type (
+	Responder func(context.Context, any, bool) (Receiver, error)
+	Receiver  func(context.Context) ([]byte, Responder, error)
+)
 
 func MakeSender(channels *HandlerChannels, replyingTo float64) Responder {
 	used := false
@@ -443,9 +434,9 @@ var HandleCreateAlarm = func(hd *HandlerData, ctx context.Context, req []byte, r
 	select {
 	case <-ctx.Done():
 		return
-	case hub.newAlarm <- AlarmSpecification{ExpiryTime: message.ExpiryTime, Name: message.Name, StartedAt: message.StartedAt}:
+	case hd.hub.newAlarm <- AlarmSpecification{ExpiryTime: message.ExpiryTime, Name: message.Name, StartedAt: message.StartedAt}:
 	}
-	alarmId := <-hub.newAlarmRes
+	alarmId := <-hd.hub.newAlarmRes
 	responder(ctx, AlarmCreatedMessage{alarmId}, false)
 }
 
@@ -460,7 +451,7 @@ var HandleSubscribe = func(hd *HandlerData, ctx context.Context, req []byte, res
 	select {
 	case <-ctx.Done():
 		return
-	case hub.registerSubscriber <- hd.info:
+	case hd.hub.registerSubscriber <- hd.info:
 	}
 
 	responder(ctx, StatusMessage{200}, false)
@@ -476,7 +467,7 @@ var HandleDismissAlarms HandlerFunc = func(hd *HandlerData, ctx context.Context,
 	select {
 	case <-ctx.Done():
 		return
-	case hub.dismissAlarms <- message.Ids:
+	case hd.hub.dismissAlarms <- message.Ids:
 	}
 
 	responder(ctx, StatusMessage{200}, false)
@@ -492,7 +483,7 @@ var HandleCancelAlarm HandlerFunc = func(hd *HandlerData, ctx context.Context, r
 	select {
 	case <-ctx.Done():
 		return
-	case hub.cancelAlarm <- message.Id:
+	case hd.hub.cancelAlarm <- message.Id:
 	}
 
 	responder(ctx, StatusMessage{200}, false)
@@ -506,7 +497,7 @@ var handlers = map[string]HandlerFunc{
 }
 
 func handleOutgoingMessages(ctx context.Context, info *ClientInfo) {
-	var err = func() error {
+	err := func() error {
 		for {
 			fmt.Println("Reading outChan")
 			select {
@@ -596,7 +587,7 @@ func closeWithError(status websocket.StatusCode, reason string, info *ClientInfo
 	if len(reason) > 125 {
 		reason = reason[:125]
 	}
-	hub.unregister <- UnregisterItem{info, status, reason}
+	info.hub.unregister <- UnregisterItem{info, status, reason}
 	info.cancel()
 }
 
@@ -618,7 +609,7 @@ func WithLockReturning[T any](lock sync.Locker, f func() T) T {
 	return f()
 }
 
-func handleWS(w http.ResponseWriter, r *http.Request) {
+func handleWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"localhost:5173"},
 	})
@@ -632,7 +623,14 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	idChan := make(chan float64)
 	outChan := make(chan OutChanItem)
 	isUnregistered := atomic.Bool{}
-	info := &ClientInfo{idChan: idChan, outChan: outChan, conn: conn, isUnregistered: &isUnregistered, cancel: cancel}
+	info := &ClientInfo{
+		hub:            hub,
+		idChan:         idChan,
+		outChan:        outChan,
+		conn:           conn,
+		isUnregistered: &isUnregistered,
+		cancel:         cancel,
+	}
 	go handleIdDistribution(ctx, idChan)
 	go handleOutgoingMessages(ctx, info)
 
@@ -641,7 +639,6 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		closeWithError(status, reason, info)
 	}
 	defer closeWithError(websocket.StatusNormalClosure, "")
-	// TODO: update
 	openThreads := OpenThreads{
 		msgIdToHandlerData: make(map[float64]*HandlerData),
 		handlerDataToMsgId: make(map[*HandlerData]float64),
@@ -677,6 +674,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			go func() {
 				handlerData := &HandlerData{
+					hub:  hub,
 					info: info,
 					channels: HandlerChannels{
 						in:  make(chan Pair[[]byte, float64]),
@@ -719,9 +717,13 @@ func main() {
 	)
 	defer stop()
 
+	hub := newHub()
+
 	srv := &http.Server{
-		Addr:    ":8080",
-		Handler: http.HandlerFunc(handleWS),
+		Addr: ":8080",
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handleWS(hub, w, r)
+		}),
 	}
 
 	go func() {
