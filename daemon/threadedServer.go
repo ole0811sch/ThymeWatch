@@ -161,7 +161,7 @@ func MakeReceiver(channels *HandlerChannels) Receiver {
 	}
 }
 
-type HandlerFunc[T any] func(*HandlerData[T], context.Context, []byte, Responder)
+type HandlerFunc[T any] func(hd *HandlerData[T], ctx context.Context, req []byte, responder Responder)
 
 // calls must be synchronized
 func (h *Hub[T]) RegisterHandler(tag string, handler HandlerFunc[T]) error {
@@ -333,6 +333,7 @@ func (hub *Hub[T]) handleWS(w http.ResponseWriter, r *http.Request) {
 		if header.Tag.present {
 			handlerFn := hub.handlers[header.Tag.value]
 			if handlerFn == nil {
+				fmt.Printf("Client send invalid tag \"%v\"\n", header.Tag.value)
 				closeWithError(websocket.StatusProtocolError, "Invalid tag")
 				return
 			}

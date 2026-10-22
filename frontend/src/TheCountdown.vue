@@ -1,21 +1,17 @@
 <script setup lang="ts">
 import { onUnmounted, ref, useTemplateRef } from 'vue'
 import {
-  removeCountdown,
-  continueCountdown,
   countdownEventTarget,
-  pauseCountdown,
   type Countdown,
 } from './countdowns'
 import { Connection } from './connection'
-import { Abort, Context } from './context'
+import { Context } from './context'
 const { countdown, detailsName } = defineProps<{ countdown: Countdown; detailsName: string }>()
 
 const displayText = ref('')
-const isPaused = ref(countdown.pausedAt !== undefined)
+const isPaused = ref(countdown.pausedAtTime !== null)
 const isExpired = ref(countdown.expired)
 const details = useTemplateRef('details')
-const detailsContent = useTemplateRef('details-content')
 const ctx = Context.background()
 
 function update() {
@@ -23,7 +19,7 @@ function update() {
     displayText.value = ''
     return
   }
-  const currentTime = countdown.pausedAt?.getTime() ?? Date.now()
+  const currentTime = countdown.pausedAtTime?.getTime() ?? Date.now()
   const timeLeft = Math.max(countdown.expiryTimestamp.getTime() - currentTime, 0)
   const secondsLeft = Math.round(timeLeft / 1000)
   const minutesLeft = Math.floor(secondsLeft / 60)
@@ -49,6 +45,7 @@ const onContinued = () => {
 countdownEventTarget.addEventListener('continued', onContinued, { countdownId: countdown.id })
 
 const removing = ref(false)
+const togglingPause = ref(false)
 
 const onRequestRemove = async () => {
   removing.value = true
@@ -59,11 +56,19 @@ const onRequestRemove = async () => {
   ctx2.cancel()
 }
 
-const onRequestTogglePause = () => {
-  if (isPaused.value) {
-    continueCountdown(countdown.id)
-  } else {
-    pauseCountdown(countdown.id)
+const onRequestTogglePause = async () => {
+  togglingPause.value = true
+  try {
+    const ctx2 = Context.withTimeout(5000, ctx)
+    const conn = Connection.getInstance()
+    if (isPaused.value) {
+      conn.continueAlarm(ctx2, countdown.id)
+    } else {
+      conn.pauseAlarm(ctx2, countdown.id)
+    }
+    ctx2.cancel()
+  } finally {
+    togglingPause.value = false
   }
 }
 

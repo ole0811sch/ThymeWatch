@@ -1,20 +1,16 @@
 export interface CountdownInput {
   startedAt: Date
   expiryTimestamp: Date
+  originalExpiryTimestamp: Date
   name?: string
   id: number
-  pausedAt?: Date
+  pausedAtTime: Date | null
 }
 export interface Countdown extends CountdownInput {
-  originalExpiryTimestamp: Date
   expired?: boolean
 }
-export interface CountdownPrivate extends Countdown {
-  /** May change */
-  timeoutId?: number
-}
 
-const countdowns: Map<number, CountdownPrivate> = new Map()
+const countdowns: Map<number, Countdown> = new Map()
 
 /**
  * @returns copy of countdowns map
@@ -24,10 +20,7 @@ export function getCountdowns(): Map<number, Countdown> {
 }
 
 export function addCountdown(cd: CountdownInput): Countdown {
-  const cdFull: CountdownPrivate = {
-    ...cd,
-    originalExpiryTimestamp: cd.expiryTimestamp,
-  }
+  const cdFull: Countdown = { ...cd }
   countdowns.set(cdFull.id, cdFull)
   handler('new', cdFull)
   return cdFull
@@ -61,29 +54,24 @@ export function removeAllCountdown(): void {
   }
 }
 
-export function pauseCountdown(id: number): void {
+export function pauseCountdown(id: number, pausedAtTime: Date): void {
   const cd = countdowns.get(id)
-  if (!cd || cd.timeoutId === undefined || cd.expired) {
+  if (!cd || cd.expired) {
     return
   }
 
-  cd.pausedAt = new Date()
+  cd.pausedAtTime = pausedAtTime
   handler('paused', cd)
 }
 
-export function continueCountdown(id: number): void {
+export function continueCountdown(id: number, newExpiryTime: Date): void {
   const cd = countdowns.get(id)
-  if (!cd || cd.timeoutId !== undefined || cd.pausedAt === undefined || cd.expired) {
+  if (!cd || cd.expired) {
     return
   }
 
-  cd.expiryTimestamp = new Date(
-    Math.min(
-      cd.expiryTimestamp.getTime() + Math.max(Date.now() - cd.pausedAt.getTime(), 0),
-      8_640_000_000_000_000,
-    ),
-  )
-  cd.pausedAt = undefined
+  cd.expiryTimestamp = newExpiryTime
+  cd.pausedAtTime = null
   handler('continued', cd)
 }
 

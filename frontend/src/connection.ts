@@ -1,12 +1,17 @@
 import { Abort, Context, type TimeoutContext } from './context'
+import type { IntersectingUnionIndex } from './types'
 
 export const tags = [
   'CREATE_ALARM',
   'CANCEL_ALARM',
   'DISMISS_ALARMS',
+  'PAUSE_ALARM',
+  'CONTINUE_ALARM',
   'SUBSCRIBE',
   'NOTIFY_ALARM',
   'ALARM_CANCELED',
+  'ALARM_PAUSED',
+  'ALARM_CONTINUED',
   'ALARM_EXPIRED',
   'ALARMS_DISMISSED',
 ] as const
@@ -26,19 +31,24 @@ export type MessageHeader = {
       inReplyTo?: null
     }
 )
+const connectionEventTypes = [
+  'reconnected',
+  'reconnecting',
+  'closed',
+  'setalarm',
+  'cancelalarm',
+  'expirealarm',
+  'alarmsdismissed',
+  'alarmpaused',
+  'alarmcontinued',
+  'ketchup',
+] as const
 /**
  * ketchup is fired when the server resends all alarms after reconnect. It's
  * fired before any of the alarms' events are fired
  */
-export type ConnectionEventType =
-  | 'reconnected'
-  | 'reconnecting'
-  | 'closed'
-  | 'setalarm'
-  | 'cancelalarm'
-  | 'expirealarm'
-  | 'alarmsdismissed'
-  | 'ketchup'
+export type ConnectionEventType = (typeof connectionEventTypes)[number]
+
 export type ConnectionEventMap = {
   reconnecting: undefined
   reconnected: undefined
@@ -49,11 +59,21 @@ export type ConnectionEventMap = {
     id: number
     startedAt: Date
     ketchup: boolean
+    pausedAtTime: Date | null
+    originalExpiryTime: Date
   }
   cancelalarm: number
   expirealarm: number
   alarmsdismissed: number[]
   ketchup: undefined
+  alarmpaused: {
+    pausedAtTime: Date
+    id: number
+  }
+  alarmcontinued: {
+    newExpiryTimestamp: Date
+    id: number
+  }
 }
 
 export class Connection {
@@ -64,16 +84,7 @@ export class Connection {
   private reconnecting: Promise<undefined> | null = null
   private handlers: {
     [T in ConnectionEventType]: Set<(data: ConnectionEventMap[T]) => void>
-  } = {
-    closed: new Set(),
-    reconnected: new Set(),
-    reconnecting: new Set(),
-    setalarm: new Set(),
-    cancelalarm: new Set(),
-    expirealarm: new Set(),
-    alarmsdismissed: new Set(),
-    ketchup: new Set(),
-  }
+  } = Object.fromEntries(connectionEventTypes.map((name) => [name, new Set()] as const)) as any
   private constructor(
     private socket: WebSocket | null,
     private promises: Map<number, (response: [MessageHeader, MessageBody] | Error) => void>,
@@ -179,9 +190,12 @@ export class Connection {
       return
     }
 
+    let eventName
     switch (header.tag) {
       case 'NOTIFY_ALARM': {
         const expiryDates: Date[] = []
+        const originalExpiryTimes: Date[] = []
+        const pausedAtTimes: (Date | null)[] = []
         const startedAts: Date[] = []
         if (
           typeof body.ketchup !== 'boolean' ||
@@ -198,11 +212,20 @@ export class Connection {
             }
             const expiryDate = new Date(alarm.spec.expiryTime)
             const startedAt = new Date(alarm.spec.startedAt)
-            if (isNaN(expiryDate.getTime()) || isNaN(startedAt.getTime())) {
+            const originalExpiryTime = new Date(alarm.originalExpiryTime)
+            const pausedAtTime = alarm.pausedAtTime === null ? null : new Date(alarm.pausedAtTime)
+            if (
+              isNaN(expiryDate.getTime()) ||
+              isNaN(startedAt.getTime()) ||
+              isNaN(originalExpiryTime.getTime()) ||
+              isNaN(pausedAtTime?.getTime() ?? 0)
+            ) {
               return true
             }
             expiryDates.push(expiryDate)
             startedAts.push(startedAt)
+            originalExpiryTimes.push(originalExpiryTime)
+            pausedAtTimes.push(pausedAtTime)
           })
         ) {
           console.error('Invalid payload for NOTIFY_ALARM')
@@ -218,6 +241,8 @@ export class Connection {
             id: body.alarms[i].id,
             startedAt: startedAts[i]!,
             ketchup: body.ketchup,
+            originalExpiryTime: originalExpiryTimes[i]!,
+            pausedAtTime: pausedAtTimes[i]!,
           })
         }
         const ctx2 = this.makeMessageContext(ctx)
@@ -226,12 +251,14 @@ export class Connection {
         break
       }
       case 'ALARM_CANCELED':
+        eventName ??= 'cancelalarm' as const
       case 'ALARM_EXPIRED': {
+        eventName ??= 'expirealarm' as const
         if (typeof body.id !== 'number') {
           console.error('Invalid type of field `id`')
           break
         }
-        this.emit(header.tag === 'ALARM_CANCELED' ? 'cancelalarm' : 'expirealarm', body.id)
+        this.emit(eventName, body.id)
         const ctx2 = this.makeMessageContext(ctx)
         await this.sendMessage(ctx2, header.id, { status: 200 })
         ctx2.cancel()
@@ -243,6 +270,45 @@ export class Connection {
           break
         }
         this.emit('alarmsdismissed', body.ids)
+        const ctx2 = this.makeMessageContext(ctx)
+        await this.sendMessage(ctx2, header.id, { status: 200 })
+        ctx2.cancel()
+        break
+      }
+      case 'ALARM_CONTINUED': {
+        eventName ??= 'alarmcontinued' as const
+        let newExpiryTime: Date
+        if (
+          typeof body.id !== 'number' ||
+          typeof body.newExpiryTime !== 'string' ||
+          ((newExpiryTime = new Date(body.newExpiryTime)), isNaN(newExpiryTime.getTime()))
+        ) {
+          console.error('Invalid payload for ALARM_CONTINUED')
+          break
+        }
+        this.emit('alarmcontinued', {
+          id: body.id,
+          newExpiryTimestamp: newExpiryTime,
+        })
+        const ctx2 = this.makeMessageContext(ctx)
+        await this.sendMessage(ctx2, header.id, { status: 200 })
+        ctx2.cancel()
+        break
+      }
+      case 'ALARM_PAUSED': {
+        let pausedAtTime: Date
+        if (
+          typeof body.id !== 'number' ||
+          typeof body.pausedAtTime !== 'string' ||
+          ((pausedAtTime = new Date(body.pausedAtTime)), isNaN(pausedAtTime.getTime()))
+        ) {
+          console.error('Invalid payload for ALARM_PAUSED')
+          break
+        }
+        this.emit('alarmpaused', {
+          id: body.id,
+          pausedAtTime: pausedAtTime,
+        })
         const ctx2 = this.makeMessageContext(ctx)
         await this.sendMessage(ctx2, header.id, { status: 200 })
         ctx2.cancel()
@@ -294,6 +360,24 @@ export class Connection {
     })
   }
 
+  async pauseAlarm<T>(
+    ctx: Context<T>,
+    id: number,
+  ): Promise<[MessageHeader, MessageBody] | Error | Abort<'timeout' | T>> {
+    return await this.asyncSendMessageDefaultTimeout(ctx, 'PAUSE_ALARM', {
+      id: id,
+    })
+  }
+
+  async continueAlarm<T>(
+    ctx: Context<T>,
+    id: number,
+  ): Promise<[MessageHeader, MessageBody] | Error | Abort<'timeout' | T>> {
+    return await this.asyncSendMessageDefaultTimeout(ctx, 'CONTINUE_ALARM', {
+      id: id,
+    })
+  }
+
   async dismissAlarms<T>(
     ctx: Context<T>,
     ids: number[],
@@ -330,7 +414,10 @@ export class Connection {
     return this.reconnecting ? 'connecting' : 'closed'
   }
 
-  private emit<T extends ConnectionEventType>(type: T, data: ConnectionEventMap[T]): void {
+  private emit<T extends ConnectionEventType>(
+    type: T,
+    data: IntersectingUnionIndex<ConnectionEventMap, T>,
+  ): void {
     this.handlers[type].forEach((handler) => handler(data))
   }
 

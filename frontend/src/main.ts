@@ -3,8 +3,10 @@ import App from './App.vue'
 import router from './router'
 import {
   addCountdown,
+  continueCountdown,
   countdownEventTarget,
   getCountdowns,
+  pauseCountdown,
   removeAllCountdown,
   removeCountdown,
   type Countdown,
@@ -24,27 +26,41 @@ Notification.requestPermission()
 const ctx = Context.background()
 const conn = Connection.getInstance()
 async function trySubscribe() {
-  const res = await conn.subscribe(ctx)
-  if (res instanceof Abort || res instanceof Error) {
-    alert('Could not connect to server')
+  for (let i = 0; i < 10; ++i) {
+    const res = await conn.subscribe(ctx)
+    if (!(res instanceof Abort || res instanceof Error)) {
+      return
+    }
   }
+  alert('Could not connect to server')
 }
 if (conn.state === 'open') {
   await trySubscribe()
 }
 conn.addEventListener('reconnected', trySubscribe)
 conn.addEventListener('ketchup', () => void removeAllCountdown())
-conn.addEventListener('setalarm', ({ expiryTime, name, id, startedAt, ketchup }) => {
-  addCountdown({
-    expiryTimestamp: expiryTime,
-    startedAt,
-    name,
-    id,
-  })
-})
+conn.addEventListener(
+  'setalarm',
+  ({ expiryTime, name, id, startedAt, originalExpiryTime, pausedAtTime }) => {
+    addCountdown({
+      expiryTimestamp: expiryTime,
+      startedAt,
+      name,
+      id,
+      originalExpiryTimestamp: originalExpiryTime,
+      pausedAtTime,
+    })
+  },
+)
 conn.addEventListener('cancelalarm', (alarmId) => {
   closeNotification(alarmId)
   removeCountdown(alarmId)
+})
+conn.addEventListener('alarmpaused', ({ id, pausedAtTime }) => {
+  pauseCountdown(id, pausedAtTime)
+})
+conn.addEventListener('alarmcontinued', ({ id, newExpiryTimestamp }) => {
+  continueCountdown(id, newExpiryTimestamp)
 })
 let retryCount = 0
 const MAX_RETRY_COUNT = 6
