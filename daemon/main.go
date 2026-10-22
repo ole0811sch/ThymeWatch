@@ -176,16 +176,17 @@ var HandleCreateAlarm = func(hd *MyHandlerData, ctx context.Context, req []byte,
 	}
 
 	fmt.Printf("Set alarm for %v", message.ExpiryTime)
+	userData := hd.hub.UserData
 	select {
 	case <-ctx.Done():
 		return
-	case hd.hub.UserData.newAlarm <- AlarmSpecification{
+	case userData.newAlarm <- AlarmSpecification{
 		ExpiryTime: message.ExpiryTime,
 		Name:       message.Name,
 		StartedAt:  message.StartedAt,
 	}:
 	}
-	alarmId := <-hd.hub.UserData.newAlarmRes
+	alarmId := <-userData.newAlarmRes
 	responder(ctx, AlarmCreatedMessage{alarmId}, false)
 }
 
@@ -359,7 +360,6 @@ func (ud *UserData) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case info := <-ud.registerSubscriber:
-			fmt.Println("Hub: register subscriber")
 			ud.subscribers[info] = true
 			slice := slices.Collect(maps.Values(ud.alarms))
 			slices.SortFunc(slice, func(a *StoredAlarm, b *StoredAlarm) int {
@@ -477,17 +477,20 @@ func main() {
 	)
 	defer stop()
 
-	hub := newHub(makeUserData())
-	hub.threadTimeout = time.Second * 5
+	userData := makeUserData()
+	hub := newHub(userData)
+	hub.lb.Write(func(value *HubContent[UserData]) {
+		value.ThreadTimeout = time.Second * 5
+		value.On.Unregistered = func(e UnregisterItem[UserData]) {
+			userData.unregisterSubscriber <- e.info
+		}
+	})
 	registerHandlers(hub)
-	hub.On.Unregistered = func(e UnregisterItem[UserData]) {
-		hub.UserData.unregisterSubscriber <- e.info
-	}
 
 	srv := &http.Server{
 		Addr: ":8080",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			hub.handleWS(w, r)
+			handleWS(hub, w, r)
 		}),
 	}
 
@@ -496,10 +499,10 @@ func main() {
 			log.Fatalf("server error: %v", err)
 		}
 	}()
-	go hub.run(ctx)
-	go hub.UserData.run(ctx)
+	go userData.run(ctx)
 
 	<-ctx.Done()
+	hub.Close()
 	log.Println("shutting down, draining connections...")
 
 	shutdownCtx, cancel := context.WithTimeout(

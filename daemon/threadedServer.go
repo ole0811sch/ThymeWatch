@@ -13,17 +13,22 @@ import (
 	"github.com/coder/websocket"
 )
 
-type Hub[T any] struct {
-	handlers   map[string]HandlerFunc[T]
-	clients    map[*ClientInfo[T]]bool
-	register   chan *ClientInfo[T]
-	unregister chan UnregisterItem[T]
-	UserData   T
-	On         struct {
+type HubContent[T any] struct {
+	handlers map[string]HandlerFunc[T]
+	clients  map[*ClientInfo[T]]bool
+	// event handlers may still be called shortly after they have removed
+	On struct {
 		Unregistered func(e UnregisterItem[T])
 	}
 	// negative for no timeout
-	threadTimeout time.Duration
+	ThreadTimeout time.Duration
+	isClosed      bool
+}
+
+// UserData can be accessed/modified without obtaining a lock (it is assumed to be synchronized internally)
+type Hub[T any] struct {
+	lb       Lockbox[HubContent[T]]
+	UserData T
 }
 
 type UnregisterItem[T any] struct {
@@ -46,14 +51,24 @@ type ClientInfo[T any] struct {
 	cancel         context.CancelFunc
 }
 
+type HubIsClosedError struct{}
+
+var HubIsClosedErrorInstance = HubIsClosedError{}
+
+func (e *HubIsClosedError) Error() string {
+	return "The hub is closed already"
+}
+
 func newHub[T any](userData T) *Hub[T] {
 	return &Hub[T]{
-		handlers:      make(map[string]HandlerFunc[T]),
-		clients:       make(map[*ClientInfo[T]]bool),
-		register:      make(chan *ClientInfo[T]),
-		unregister:    make(chan UnregisterItem[T]),
-		UserData:      userData,
-		threadTimeout: -1,
+		lb: Lockbox[HubContent[T]]{
+			value: HubContent[T]{
+				handlers:      make(map[string]HandlerFunc[T]),
+				clients:       make(map[*ClientInfo[T]]bool),
+				ThreadTimeout: -1,
+			},
+		},
+		UserData: userData,
 	}
 }
 
@@ -82,27 +97,48 @@ func SendMessageToClient[T any](ctx context.Context, info *ClientInfo[T], tag Op
 	return id, nil
 }
 
-func (h *Hub[T]) run(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Println("Hub: close")
-			for c := range h.clients {
-				c.conn.CloseNow()
-			}
-			return
-		case c := <-h.register:
-			fmt.Println("Hub: register")
-			h.clients[c] = true
-		case item := <-h.unregister:
-			fmt.Println("Hub: unregister")
-			delete(h.clients, item.info)
-			item.info.conn.Close(item.status, item.reason)
-			if h.On.Unregistered != nil {
-				go h.On.Unregistered(item)
-			}
+func (h *Hub[T]) Register(c *ClientInfo[T]) error {
+	return h.lb.WriteReturning(func(value *HubContent[T]) error {
+		if value.isClosed {
+			return &HubIsClosedErrorInstance
 		}
+		fmt.Println("Hub: register")
+		value.clients[c] = true
+		return nil
+	})
+}
+
+func (h *Hub[T]) Unregister(item UnregisterItem[T]) error {
+	onUnregistered, err := h.lb.WriteReturning2(func(value *HubContent[T]) (func(UnregisterItem[T]), error) {
+		if value.isClosed {
+			return nil, &HubIsClosedErrorInstance
+		}
+		fmt.Println("Hub: unregister")
+		delete(value.clients, item.info)
+		item.info.conn.Close(item.status, item.reason)
+		return value.On.Unregistered, nil
+	})
+	if err != nil {
+		return err
 	}
+	if onUnregistered != nil {
+		onUnregistered(item)
+	}
+	return nil
+}
+
+func (h *Hub[T]) Close() error {
+	return h.lb.WriteReturning(func(value *HubContent[T]) error {
+		if value.isClosed {
+			return &HubIsClosedErrorInstance
+		}
+		value.isClosed = true
+		fmt.Println("Hub: close")
+		for c := range value.clients {
+			c.conn.CloseNow()
+		}
+		return nil
+	})
 }
 
 // Exactly one of Tag and InReplyTo should be zero
@@ -167,14 +203,18 @@ func MakeReceiver(channels *HandlerChannels) Receiver {
 
 type HandlerFunc[T any] func(hd *HandlerData[T], ctx context.Context, req []byte, responder Responder)
 
-// calls must be synchronized
 func (h *Hub[T]) RegisterHandler(tag string, handler HandlerFunc[T]) error {
-	_, tagExistsAlready := h.handlers[tag]
-	if tagExistsAlready {
-		return fmt.Errorf("Handler for tag %v exists already", tag)
-	}
-	h.handlers[tag] = handler
-	return nil
+	return h.lb.WriteReturning(func(value *HubContent[T]) error {
+		if value.isClosed {
+			return &HubIsClosedErrorInstance
+		}
+		_, tagExistsAlready := value.handlers[tag]
+		if tagExistsAlready {
+			return fmt.Errorf("Handler for tag %v exists already", tag)
+		}
+		value.handlers[tag] = handler
+		return nil
+	})
 }
 
 func handleOutgoingMessages[T any](ctx context.Context, info *ClientInfo[T]) {
@@ -268,7 +308,7 @@ func closeWithError[T any](status websocket.StatusCode, reason string, info *Cli
 	if len(reason) > 125 {
 		reason = reason[:125]
 	}
-	info.hub.unregister <- UnregisterItem[T]{info, status, reason}
+	info.hub.Unregister(UnregisterItem[T]{info, status, reason})
 	info.cancel()
 }
 
@@ -277,7 +317,7 @@ type OpenThreads[T any] struct {
 	handlerDataToMsgId map[*HandlerData[T]]float64
 }
 
-func (hub *Hub[T]) handleWS(w http.ResponseWriter, r *http.Request) {
+func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"localhost:5173"},
 	})
@@ -302,7 +342,7 @@ func (hub *Hub[T]) handleWS(w http.ResponseWriter, r *http.Request) {
 	go handleIdDistribution(ctx, idChan)
 	go handleOutgoingMessages(ctx, info)
 
-	hub.register <- info
+	hub.Register(info)
 	closeWithError := func(status websocket.StatusCode, reason string) {
 		closeWithError(status, reason, info)
 	}
@@ -335,7 +375,9 @@ func (hub *Hub[T]) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Println(header)
 		if header.Tag.present {
-			handlerFn := hub.handlers[header.Tag.value]
+			handlerFn, threadTimeout := hub.lb.ReadReturning2(func(value *HubContent[T]) (HandlerFunc[T], time.Duration) {
+				return value.handlers[header.Tag.value], value.ThreadTimeout
+			})
 			if handlerFn == nil {
 				fmt.Printf("Client send invalid tag \"%v\"\n", header.Tag.value)
 				closeWithError(websocket.StatusProtocolError, "Invalid tag")
@@ -350,7 +392,7 @@ func (hub *Hub[T]) handleWS(w http.ResponseWriter, r *http.Request) {
 						out: make(chan Triple[any, float64, bool]),
 					},
 				}
-				ctx3, cancel3 := context.WithTimeout(ctx, hub.threadTimeout)
+				ctx3, cancel3 := context.WithTimeout(ctx, threadTimeout)
 				go handleThreadMessages(ctx3, info, handlerData, &openThreads)
 				handlerFn(handlerData, ctx3, msg[endHeader+1:], MakeSender(&handlerData.channels, header.Id))
 				cancel3()
