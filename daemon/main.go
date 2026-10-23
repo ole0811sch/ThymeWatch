@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"sync"
 	"syscall"
 	"time"
 
@@ -37,6 +38,12 @@ type (
 
 type StatusMessage struct {
 	Status int `json:"status"`
+}
+
+func ParseStatusMessage(bytes []byte) (StatusMessage, error) {
+	var message StatusMessage
+	err := json.Unmarshal(bytes, &message)
+	return message, err
 }
 
 type AlarmCreatedMessage struct {
@@ -266,34 +273,47 @@ func makeUserData() UserData {
 	}
 }
 
+func SendAndWaitFor200(ctx context.Context, info *MyClientInfo, tag string, body any) error {
+	return info.StartRequestThread(ctx, info.hub.ThreadTimeout(), tag,
+		body,
+		func(hd *HandlerData[UserData], ctx context.Context, receiver Receiver) error {
+			bytes, _, err := receiver(ctx)
+			if err != nil {
+				return err
+			}
+			msg, err := ParseStatusMessage(bytes)
+			if err != nil {
+				return err
+			}
+			if msg.Status != 200 {
+				return fmt.Errorf("Client send status %v", msg.Status)
+			}
+			return nil
+		})
+}
+
 func SendAlarmsToClient(ctx context.Context, info *MyClientInfo, alarms []*StoredAlarm, ketchup bool) error {
-	_, err := SendMessageToClient(ctx, info, Some("NOTIFY_ALARM"), Optional[float64]{}, NotifyAlarmMessage{alarms, ketchup})
-	return err
+	return SendAndWaitFor200(ctx, info, "NOTIFY_ALARM", NotifyAlarmMessage{alarms, ketchup})
 }
 
 func SendCanceledAlarmToClient(ctx context.Context, info *MyClientInfo, alarmId float64) error {
-	_, err := SendMessageToClient(ctx, info, Some("ALARM_CANCELED"), Optional[float64]{}, AlarmCanceledMessage{Id: alarmId})
-	return err
+	return SendAndWaitFor200(ctx, info, "ALARM_CANCELED", AlarmCanceledMessage{Id: alarmId})
 }
 
 func SendExpiredAlarmToClient(ctx context.Context, info *MyClientInfo, alarmId float64) error {
-	_, err := SendMessageToClient(ctx, info, Some("ALARM_EXPIRED"), Optional[float64]{}, AlarmExpiredMessage{Id: alarmId})
-	return err
+	return SendAndWaitFor200(ctx, info, "ALARM_EXPIRED", AlarmExpiredMessage{Id: alarmId})
 }
 
 func SendAlarmsDismissedToClient(ctx context.Context, info *MyClientInfo, ids []float64) error {
-	_, err := SendMessageToClient(ctx, info, Some("ALARMS_DISMISSED"), Optional[float64]{}, AlarmsDismissedMessage{Ids: ids})
-	return err
+	return SendAndWaitFor200(ctx, info, "ALARM_DISMISSED", AlarmsDismissedMessage{Ids: ids})
 }
 
 func SendAlarmPausedToClient(ctx context.Context, info *MyClientInfo, id float64, pausedAtTime time.Time) error {
-	_, err := SendMessageToClient(ctx, info, Some("ALARM_PAUSED"), Optional[float64]{}, AlarmPausedMessage{Id: id, PausedAtTime: pausedAtTime})
-	return err
+	return SendAndWaitFor200(ctx, info, "ALARM_PAUSED", AlarmPausedMessage{Id: id, PausedAtTime: pausedAtTime})
 }
 
 func SendAlarmContinuedToClient(ctx context.Context, info *MyClientInfo, id float64, newExpiryTime time.Time) error {
-	_, err := SendMessageToClient(ctx, info, Some("ALARM_CONTINUED"), Optional[float64]{}, AlarmContinuedMessage{Id: id, NewExpiryTime: newExpiryTime})
-	return err
+	return SendAndWaitFor200(ctx, info, "ALARM_CONTINUED", AlarmContinuedMessage{Id: id, NewExpiryTime: newExpiryTime})
 }
 
 func (ud *UserData) startAlarm(alarm *StoredAlarm) {
@@ -336,15 +356,16 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) floa
 		value.alarms[value.alarmId] = newStoredAlarm
 		value.alarmId++
 		ud.startAlarm(newStoredAlarm)
+		wg := sync.WaitGroup{}
 		for info := range value.subscribers {
-			err := SendAlarmsToClient(ctx, info, []*StoredAlarm{newStoredAlarm}, false)
-			if err != nil {
-				fmt.Println("Could not notify of new alarm: ", err)
-			}
-			if ctx.Err() != nil {
-				return newStoredAlarm.Id
-			}
+			wg.Go(func() {
+				err := SendAlarmsToClient(ctx, info, []*StoredAlarm{newStoredAlarm}, false)
+				if err != nil {
+					fmt.Println("Could not notify of new alarm: ", err)
+				}
+			})
 		}
+		wg.Wait()
 		return newStoredAlarm.Id
 	})
 }
@@ -383,15 +404,16 @@ func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) {
 		}
 		alarm.IsExpired = true
 		value.expiredAlarms = append(value.expiredAlarms, alarmId)
+		wg := sync.WaitGroup{}
 		for info := range value.subscribers {
-			err := SendExpiredAlarmToClient(ctx, info, alarmId)
-			if err != nil {
-				fmt.Println("Could not send alarm expiration to client: ", err)
-			}
-			if ctx.Err() != nil {
-				return
-			}
+			wg.Go(func() {
+				err := SendExpiredAlarmToClient(ctx, info, alarmId)
+				if err != nil {
+					fmt.Println("Could not send alarm expiration to client: ", err)
+				}
+			})
 		}
+		wg.Wait()
 	})
 }
 
@@ -410,15 +432,16 @@ func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) {
 			}
 			alarm.IsExpired = true
 		}
+		wg := sync.WaitGroup{}
 		for info := range value.subscribers {
-			err := SendAlarmsDismissedToClient(ctx, info, ids)
-			if err != nil {
-				fmt.Println("Could not send alarm dismissal to client: ", err)
-			}
-			if ctx.Err() != nil {
-				return
-			}
+			wg.Go(func() {
+				err := SendAlarmsDismissedToClient(ctx, info, ids)
+				if err != nil {
+					fmt.Println("Could not send alarm dismissal to client: ", err)
+				}
+			})
 		}
+		wg.Wait()
 		value.expiredAlarms = nil
 	})
 }
@@ -438,15 +461,16 @@ func (ud *UserData) pauseAlarm(ctx context.Context, pauseId float64) {
 		pausedAtTime := time.Now()
 		storedAlarm.PausedAtTime = Some(pausedAtTime)
 		ud.stopAlarm(storedAlarm)
+		wg := sync.WaitGroup{}
 		for info := range udc.subscribers {
-			err := SendAlarmPausedToClient(ctx, info, pauseId, pausedAtTime)
-			if err != nil {
-				fmt.Println("Could not send alarm pausing to client: ", err)
-			}
-			if ctx.Err() != nil {
-				return
-			}
+			wg.Go(func() {
+				err := SendAlarmPausedToClient(ctx, info, pauseId, pausedAtTime)
+				if err != nil {
+					fmt.Println("Could not send alarm pausing to client: ", err)
+				}
+			})
 		}
+		wg.Wait()
 	})
 }
 
@@ -469,15 +493,18 @@ func (ud *UserData) continueAlarm(ctx context.Context, continueId float64) {
 		storedAlarm.PausedAtTime.present = false
 		storedAlarm.Spec.ExpiryTime = storedAlarm.Spec.ExpiryTime.Add(pausedDuration)
 		ud.startAlarm(storedAlarm)
+		wg := sync.WaitGroup{}
 		for info := range udc.subscribers {
-			err := SendAlarmContinuedToClient(ctx, info, continueId, storedAlarm.Spec.ExpiryTime)
-			if err != nil {
-				fmt.Println("Could not send alarm continuation to client: ", err)
-			}
-			if ctx.Err() != nil {
-				return
-			}
+			wg.Go(
+				func() {
+					err := SendAlarmContinuedToClient(ctx, info, continueId, storedAlarm.Spec.ExpiryTime)
+					if err != nil {
+						fmt.Println("Could not send alarm continuation to client: ", err)
+					}
+				},
+			)
 		}
+		wg.Wait()
 	})
 }
 
@@ -488,15 +515,16 @@ func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) {
 		if l1 == len(udc.alarms) {
 			return
 		}
+		wg := sync.WaitGroup{}
 		for info := range udc.subscribers {
-			err := SendCanceledAlarmToClient(ctx, info, cancelId)
-			if err != nil {
-				fmt.Println("Could not send alarm cancelation to client: ", err)
-			}
-			if ctx.Err() != nil {
-				return
-			}
+			wg.Go(func() {
+				err := SendCanceledAlarmToClient(ctx, info, cancelId)
+				if err != nil {
+					fmt.Println("Could not send alarm cancelation to client: ", err)
+				}
+			})
 		}
+		wg.Wait()
 	})
 }
 

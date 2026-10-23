@@ -48,6 +48,7 @@ type ClientInfo[T any] struct {
 	conn           *websocket.Conn
 	isUnregistered *atomic.Bool
 	cancel         context.CancelFunc
+	OpenThreads    Lockbox[OpenThreads[T]]
 }
 
 func (c *ClientInfo[T]) ObtainId() float64 {
@@ -90,6 +91,17 @@ func SendMessageToClient[T any](ctx context.Context, info *ClientInfo[T], tag Op
 		Tag:       tag,
 	}
 	return header.Id, info.Send(ctx, header, body)
+}
+
+func (c *ClientInfo[T]) StartRequestThread[R any](ctx context.Context,
+	threadTimeout time.Duration, tag string, body any,
+	handlerFn func(hd *HandlerData[T], ctx context.Context,
+		receiver Receiver) R,
+) R {
+	return c.startThread(ctx, threadTimeout, func(handlerData *HandlerData[T], ctx context.Context) R {
+		handlerData.sendOnThread(ctx, body, nil, Optional[float64]{}, Some(tag))
+		return handlerFn(handlerData, ctx, MakeReceiver(handlerData))
+	})
 }
 
 func (h *Hub[T]) Register(c *ClientInfo[T]) error {
@@ -136,6 +148,12 @@ func (h *Hub[T]) Close() error {
 	})
 }
 
+func (h *Hub[T]) ThreadTimeout() time.Duration {
+	return h.lb.ReadReturning(func(value *HubContent[T]) time.Duration {
+		return value.ThreadTimeout
+	})
+}
+
 // Exactly one of Tag and InReplyTo should be zero
 type MessageHeader struct {
 	InReplyTo Optional[float64] `json:"inReplyTo"`
@@ -164,10 +182,10 @@ func MakeSender[T any](replyingTo float64, handlerData *HandlerData[T]) Responde
 		}
 		used = true
 		if isErr {
-			handlerData.sendOnThread(ctx, nil, data.(error), replyingTo)
+			handlerData.sendOnThread(ctx, nil, data.(error), Some(replyingTo), Optional[string]{})
 			return nil, nil
 		} else {
-			handlerData.sendOnThread(ctx, data, nil, replyingTo)
+			handlerData.sendOnThread(ctx, data, nil, Some(replyingTo), Optional[string]{})
 			return MakeReceiver(handlerData), nil
 		}
 	}
@@ -234,7 +252,7 @@ func (info *ClientInfo[T]) Send(ctx context.Context, header MessageHeader, body 
 	return nil
 }
 
-func (hd *HandlerData[T]) sendOnThread(ctx context.Context, body any, err error, inReplyTo float64) {
+func (hd *HandlerData[T]) sendOnThread(ctx context.Context, body any, err error, inReplyTo Optional[float64], tag Optional[string]) {
 	if err != nil {
 		protErr, ok := err.(websocket.CloseError)
 		if ok {
@@ -245,7 +263,7 @@ func (hd *HandlerData[T]) sendOnThread(ctx context.Context, body any, err error,
 		return
 	}
 
-	id, err := SendMessageToClient(ctx, hd.info, Optional[string]{}, Some(inReplyTo), body)
+	id, err := SendMessageToClient(ctx, hd.info, tag, inReplyTo, body)
 	if err != nil {
 		return // ctx is done
 	}
@@ -284,6 +302,30 @@ type OpenThreads[T any] struct {
 	handlerDataToMsgId map[*HandlerData[T]]float64
 }
 
+func (c *ClientInfo[T]) startThread[R any](ctx context.Context, timeout time.Duration, handlerFn func(handlerData *HandlerData[T], ctx context.Context) R) R {
+	handlerData := &HandlerData[T]{
+		hub:     c.hub,
+		info:    c,
+		in:      make(chan Pair[[]byte, float64]),
+		threads: &c.OpenThreads,
+	}
+	ctx3, cancel3 := context.WithTimeout(
+		ctx,
+		timeout,
+	)
+	ret := handlerFn(handlerData, ctx3)
+	cancel3()
+	c.OpenThreads.Write(func(t *OpenThreads[T]) {
+		id := t.handlerDataToMsgId[handlerData]
+		l1 := len(t.handlerDataToMsgId)
+		delete(t.handlerDataToMsgId, handlerData)
+		if len(t.handlerDataToMsgId) < l1 {
+			delete(t.msgIdToHandlerData, id)
+		}
+	})
+	return ret
+}
+
 func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"localhost:5173"},
@@ -297,11 +339,16 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 
 	idChan := make(chan float64)
 	isUnregistered := atomic.Bool{}
+
 	info := &ClientInfo[T]{
 		hub:            hub,
 		conn:           conn,
 		isUnregistered: &isUnregistered,
-		cancel:         cancel,
+		OpenThreads: MakeLockbox(OpenThreads[T]{
+			msgIdToHandlerData: make(map[float64]*HandlerData[T]),
+			handlerDataToMsgId: make(map[*HandlerData[T]]float64),
+		}),
+		cancel: cancel,
 	}
 	go handleIdDistribution(ctx, idChan)
 
@@ -310,10 +357,6 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 		closeWithError(status, reason, info)
 	}
 	defer closeWithError(websocket.StatusNormalClosure, "")
-	openThreads := MakeLockbox(OpenThreads[T]{
-		msgIdToHandlerData: make(map[float64]*HandlerData[T]),
-		handlerDataToMsgId: make(map[*HandlerData[T]]float64),
-	})
 
 	for {
 		ctx2, cancel2 := context.WithCancel(ctx)
@@ -346,27 +389,12 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 				closeWithError(websocket.StatusProtocolError, "Invalid tag")
 				return
 			}
-			go func() {
-				handlerData := &HandlerData[T]{
-					hub:     hub,
-					info:    info,
-					in:      make(chan Pair[[]byte, float64]),
-					threads: &openThreads,
-				}
-				ctx3, cancel3 := context.WithTimeout(ctx, threadTimeout)
-				handlerFn(handlerData, ctx3, msg[endHeader+1:], MakeSender(header.Id, handlerData))
-				cancel3()
-				openThreads.Write(func(t *OpenThreads[T]) {
-					id := t.handlerDataToMsgId[handlerData]
-					l1 := len(t.handlerDataToMsgId)
-					delete(t.handlerDataToMsgId, handlerData)
-					if len(t.handlerDataToMsgId) < l1 {
-						delete(t.msgIdToHandlerData, id)
-					}
-				})
-			}()
+			go info.startThread(ctx, threadTimeout, func(handlerData *HandlerData[T], ctx context.Context) struct{} {
+				handlerFn(handlerData, ctx, msg[endHeader+1:], MakeSender(header.Id, handlerData))
+				return struct{}{}
+			})
 		} else {
-			data := openThreads.WriteReturning(func(t *OpenThreads[T]) *HandlerData[T] {
+			data := info.OpenThreads.WriteReturning(func(t *OpenThreads[T]) *HandlerData[T] {
 				data := t.msgIdToHandlerData[header.InReplyTo.value]
 				delete(t.msgIdToHandlerData, header.InReplyTo.value)
 				delete(t.handlerDataToMsgId, data)
