@@ -13,7 +13,7 @@ import {
 } from './countdowns.ts'
 import { audio } from './audio.ts'
 import { closeNotification, newNotification, notifs } from './notifs.ts'
-import { Connection } from './connection.ts'
+import { Connection, type ConnectionEventMap } from './connection.ts'
 import { Abort, Context } from './context.ts'
 
 const app = createApp(App)
@@ -76,7 +76,7 @@ conn.addEventListener('alarmcontinued', ({ id, newExpiryTimestamp }) => {
 let retryCount = 0
 const MAX_RETRY_COUNT = 6
 const retryCallbackId: [null | number] = [null]
-const onClosed = () => {
+const tryReconnected = () => {
   async function f() {
     if (retryCount >= MAX_RETRY_COUNT || conn.state === 'open') {
       return
@@ -92,7 +92,12 @@ const onClosed = () => {
     f()
   }
 }
-conn.addEventListener('closed', onClosed)
+conn.addEventListener('closed', (e) => {
+  if (!e.weClosed) {
+    console.error(`Server closed connection (${e.code}): ${e.reason}`)
+  }
+  tryReconnected()
+})
 conn.addEventListener('reconnected', () => {
   retryCount = 0
   if (retryCallbackId[0] !== null) {
@@ -101,7 +106,7 @@ conn.addEventListener('reconnected', () => {
   }
 })
 if (conn.state === 'closed') {
-  onClosed()
+  tryReconnected()
 }
 
 const onExpired = async (countdown: Countdown) => {

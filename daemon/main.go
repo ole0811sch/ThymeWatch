@@ -274,22 +274,23 @@ func makeUserData() UserData {
 }
 
 func SendAndWaitFor200(ctx context.Context, info *MyClientInfo, tag string, body any) error {
-	return info.StartRequestThread(ctx, info.hub.ThreadTimeout(), tag,
+	_, ret := info.StartRequestThreadCloseOnError(ctx, info.hub.ThreadTimeout(), tag,
 		body,
-		func(hd *HandlerData[UserData], ctx context.Context, receiver Receiver) error {
-			bytes, _, err := receiver(ctx)
+		func(hd *HandlerData[UserData], ctx2 context.Context, receiver Receiver) (Void, error) {
+			bytes, _, err := receiver(ctx2)
 			if err != nil {
-				return err
+				return VVoid, err
 			}
 			msg, err := ParseStatusMessage(bytes)
 			if err != nil {
-				return err
+				return VVoid, err
 			}
 			if msg.Status != 200 {
-				return fmt.Errorf("Client send status %v", msg.Status)
+				return VVoid, fmt.Errorf("Client send status %v", msg.Status)
 			}
-			return nil
+			return VVoid, nil
 		})
+	return ret
 }
 
 func SendAlarmsToClient(ctx context.Context, info *MyClientInfo, alarms []*StoredAlarm, ketchup bool) error {

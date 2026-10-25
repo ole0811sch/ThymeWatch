@@ -52,7 +52,12 @@ export type ConnectionEventType = (typeof connectionEventTypes)[number]
 export type ConnectionEventMap = {
   reconnecting: undefined
   reconnected: undefined
-  closed: undefined
+  closed: {
+    /** whether the closing was requested by our end of the connection */
+    weClosed: boolean
+    reason: string
+    code: number
+  }
   setalarm: {
     expiryTime: Date
     name: string | undefined
@@ -78,6 +83,12 @@ export type ConnectionEventMap = {
   }
 }
 
+export const weClosedSym = Symbol('weClosedSym')
+
+export interface MyWebSocket extends WebSocket {
+  [weClosedSym]?: boolean
+}
+
 export class Connection {
   private i = 0
   private static connectedInstance: Promise<Connection | Error> | null = null
@@ -88,7 +99,7 @@ export class Connection {
     [T in ConnectionEventType]: Set<(data: ConnectionEventMap[T]) => void>
   } = Object.fromEntries(connectionEventTypes.map((name) => [name, new Set()] as const)) as any
   private constructor(
-    private socket: WebSocket | null,
+    private socket: MyWebSocket | null,
     private promises: Map<number, (response: [MessageHeader, MessageBody] | Error) => void>,
   ) {}
 
@@ -440,7 +451,7 @@ export class Connection {
       this.socket = null
     }
     this.emit('reconnecting', undefined)
-    const socket = new WebSocket('ws://localhost:8080/')
+    const socket: MyWebSocket = new WebSocket('ws://localhost:8080/')
     let res: (_: boolean) => void
     const promIsSucc = new Promise<boolean>((res_) => (res = res_))
     let resReconnecting: (_: undefined) => void
@@ -448,14 +459,15 @@ export class Connection {
     socket.addEventListener('open', async (event) => res(true))
     socket.addEventListener('message', (event) => this.handleMessage(Context.background(), event))
     socket.addEventListener('close', (event) => {
-      if (event.code !== 1000) {
-        console.log('Connection closed: ' + event.reason)
-      }
       for (const res of this.promises.values()) {
         res(Error('Connection closed: ' + event.reason))
       }
       this.promises.clear()
-      this.emit('closed', undefined)
+      this.emit('closed', {
+        weClosed: socket[weClosedSym] ?? false,
+        code: event.code,
+        reason: event.reason,
+      })
     })
     socket.addEventListener('error', (error) => {
       res(false)

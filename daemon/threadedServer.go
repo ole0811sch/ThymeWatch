@@ -96,12 +96,30 @@ func SendMessageToClient[T any](ctx context.Context, info *ClientInfo[T], tag Op
 func (c *ClientInfo[T]) StartRequestThread[R any](ctx context.Context,
 	threadTimeout time.Duration, tag string, body any,
 	handlerFn func(hd *HandlerData[T], ctx context.Context,
-		receiver Receiver) R,
-) R {
-	return c.startThread(ctx, threadTimeout, func(handlerData *HandlerData[T], ctx context.Context) R {
+		receiver Receiver) (R, error),
+) (R, error) {
+	return c.startThread(ctx, threadTimeout, func(handlerData *HandlerData[T], ctx context.Context) (R, error) {
 		handlerData.sendOnThread(ctx, body, nil, Optional[float64]{}, Some(tag))
 		return handlerFn(handlerData, ctx, MakeReceiver(handlerData))
 	})
+}
+
+func (c *ClientInfo[T]) StartRequestThreadCloseOnError[R any](ctx context.Context,
+	threadTimeout time.Duration, tag string, body any,
+	handlerFn func(hd *HandlerData[T], ctx context.Context,
+		receiver Receiver) (R, error),
+) (R, error) {
+	val, err := c.StartRequestThread(ctx, threadTimeout, tag, body, handlerFn)
+	if err != nil {
+		closeError, ok := err.(websocket.CloseError)
+		if ok {
+			closeWithError(closeError.Code, closeError.Reason, c)
+		} else {
+			closeWithError(websocket.StatusInternalError, err.Error(), c)
+		}
+		return Zero[R](), err
+	}
+	return val, nil
 }
 
 func (h *Hub[T]) Register(c *ClientInfo[T]) error {
@@ -170,7 +188,7 @@ type HandlerData[T any] struct {
 }
 
 type (
-	Responder func(context.Context, any, bool) (Receiver, error)
+	Responder func(ctx context.Context, body any, isErr bool) (Receiver, error)
 	Receiver  func(context.Context) ([]byte, Responder, error)
 )
 
@@ -302,7 +320,10 @@ type OpenThreads[T any] struct {
 	handlerDataToMsgId map[*HandlerData[T]]float64
 }
 
-func (c *ClientInfo[T]) startThread[R any](ctx context.Context, timeout time.Duration, handlerFn func(handlerData *HandlerData[T], ctx context.Context) R) R {
+func (c *ClientInfo[T]) startThread[R any](ctx context.Context,
+	timeout time.Duration, handlerFn func(handlerData *HandlerData[T],
+		ctx context.Context) (R, error),
+) (R, error) {
 	handlerData := &HandlerData[T]{
 		hub:     c.hub,
 		info:    c,
@@ -313,7 +334,7 @@ func (c *ClientInfo[T]) startThread[R any](ctx context.Context, timeout time.Dur
 		ctx,
 		timeout,
 	)
-	ret := handlerFn(handlerData, ctx3)
+	ret, err := handlerFn(handlerData, ctx3)
 	cancel3()
 	c.OpenThreads.Write(func(t *OpenThreads[T]) {
 		id := t.handlerDataToMsgId[handlerData]
@@ -323,7 +344,7 @@ func (c *ClientInfo[T]) startThread[R any](ctx context.Context, timeout time.Dur
 			delete(t.msgIdToHandlerData, id)
 		}
 	})
-	return ret
+	return ret, err
 }
 
 func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
@@ -389,10 +410,12 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 				closeWithError(websocket.StatusProtocolError, "Invalid tag")
 				return
 			}
-			go info.startThread(ctx, threadTimeout, func(handlerData *HandlerData[T], ctx context.Context) struct{} {
-				handlerFn(handlerData, ctx, msg[endHeader+1:], MakeSender(header.Id, handlerData))
-				return struct{}{}
-			})
+			go info.startThread(ctx, threadTimeout,
+				func(handlerData *HandlerData[T], ctx context.Context) (struct{}, error) {
+					handlerFn(handlerData, ctx, msg[endHeader+1:],
+						MakeSender(header.Id, handlerData))
+					return struct{}{}, nil
+				})
 		} else {
 			data := info.OpenThreads.WriteReturning(func(t *OpenThreads[T]) *HandlerData[T] {
 				data := t.msgIdToHandlerData[header.InReplyTo.value]
