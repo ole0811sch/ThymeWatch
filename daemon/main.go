@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -180,11 +181,15 @@ var HandleCreateAlarm = func(hd *MyHandlerData, ctx context.Context, req []byte,
 	}
 
 	fmt.Printf("Set alarm for %v", message.ExpiryTime)
-	alarmId := hd.hub.UserData.newAlarm(ctx, &AlarmSpecification{
+	alarmId, err := hd.hub.UserData.newAlarm(ctx, &AlarmSpecification{
 		ExpiryTime: message.ExpiryTime,
 		Name:       message.Name,
 		StartedAt:  message.StartedAt,
 	})
+	if err != nil {
+		responder(ctx, err, true)
+		return
+	}
 	responder(ctx, AlarmCreatedMessage{alarmId}, false)
 }
 
@@ -198,7 +203,11 @@ var HandleSubscribe = func(hd *MyHandlerData, ctx context.Context, req []byte, r
 	}
 	_ = message
 
-	hd.hub.UserData.registerSubscriber(ctx, hd.info)
+	err = hd.hub.UserData.registerSubscriber(ctx, hd.info)
+	if err != nil {
+		responder(ctx, err, true)
+		return
+	}
 	fmt.Println("E2")
 
 	responder(ctx, StatusMessage{200}, false)
@@ -211,7 +220,11 @@ var HandleDismissAlarms MyHandlerFunc = func(hd *MyHandlerData, ctx context.Cont
 		return
 	}
 
-	hd.hub.UserData.dismissAlarms(ctx, message.Ids)
+	err = hd.hub.UserData.dismissAlarms(ctx, message.Ids)
+	if err != nil {
+		responder(ctx, err, true)
+		return
+	}
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -223,7 +236,10 @@ var HandleCancelAlarm MyHandlerFunc = func(hd *MyHandlerData, ctx context.Contex
 		return
 	}
 
-	hd.hub.UserData.cancelAlarm(ctx, message.Id)
+	err = hd.hub.UserData.cancelAlarm(ctx, message.Id)
+	if err != nil {
+		responder(ctx, err, true)
+	}
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -235,7 +251,10 @@ var HandlePauseAlarm MyHandlerFunc = func(hd *HandlerData[UserData], ctx context
 		return
 	}
 
-	hd.hub.UserData.pauseAlarm(ctx, message.Id)
+	err = hd.hub.UserData.pauseAlarm(ctx, message.Id)
+	if err != nil {
+		responder(ctx, err, true)
+	}
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -247,34 +266,43 @@ var HandleContinueAlarm MyHandlerFunc = func(hd *HandlerData[UserData], ctx cont
 		return
 	}
 
-	hd.hub.UserData.continueAlarm(ctx, message.Id)
+	err = hd.hub.UserData.continueAlarm(ctx, message.Id)
+	if err != nil {
+		responder(ctx, err, true)
+	}
 
 	responder(ctx, StatusMessage{200}, false)
 }
 
-func registerHandlers(hub *MyHub) {
-	hub.RegisterHandler("CREATE_ALARM", HandleCreateAlarm)
-	hub.RegisterHandler("SUBSCRIBE", HandleSubscribe)
-	hub.RegisterHandler("CANCEL_ALARM", HandleCancelAlarm)
-	hub.RegisterHandler("DISMISS_ALARMS", HandleDismissAlarms)
-	hub.RegisterHandler("PAUSE_ALARM", HandlePauseAlarm)
-	hub.RegisterHandler("CONTINUE_ALARM", HandleContinueAlarm)
+func registerHandlers(ctx context.Context, hub *MyHub) error {
+	hub.RegisterHandler(ctx, "CREATE_ALARM", HandleCreateAlarm)
+	hub.RegisterHandler(ctx, "SUBSCRIBE", HandleSubscribe)
+	hub.RegisterHandler(ctx, "CANCEL_ALARM", HandleCancelAlarm)
+	hub.RegisterHandler(ctx, "DISMISS_ALARMS", HandleDismissAlarms)
+	hub.RegisterHandler(ctx, "PAUSE_ALARM", HandlePauseAlarm)
+	hub.RegisterHandler(ctx, "CONTINUE_ALARM", HandleContinueAlarm)
+	return ctx.Err()
 }
 
 func makeUserData() UserData {
 	return UserData{
-		lb: Lockbox[UserDataContent]{
-			value: UserDataContent{
+		lb: MakeLockbox(
+			UserDataContent{
 				subscribers:  make(map[*MyClientInfo]bool),
 				alarms:       make(map[float64]*StoredAlarm),
 				pausedAlarms: make(map[float64]bool),
 			},
-		},
+		),
 	}
 }
 
 func SendAndWaitFor200(ctx context.Context, info *MyClientInfo, tag string, body any) error {
-	_, ret := info.StartRequestThreadCloseOnError(ctx, info.hub.ThreadTimeout(), tag,
+	timeout, err := info.hub.ThreadTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	timeout = time.Duration(math.MaxInt64)
+	_, ret := info.StartRequestThreadCloseOnError(ctx, timeout, tag,
 		body,
 		func(hd *HandlerData[UserData], ctx2 context.Context, receiver Receiver) (Void, error) {
 			bytes, _, err := receiver(ctx2)
@@ -290,6 +318,9 @@ func SendAndWaitFor200(ctx context.Context, info *MyClientInfo, tag string, body
 			}
 			return VVoid, nil
 		})
+	if ret != nil {
+		log.Printf("Error in request-thread: %v\n", ret)
+	}
 	return ret
 }
 
@@ -344,8 +375,8 @@ func (ud *UserData) stopAlarm(alarm *StoredAlarm) {
 	alarm.cancel = nil
 }
 
-func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) float64 {
-	return ud.lb.WriteReturning(func(value *UserDataContent) float64 {
+func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (float64, error) {
+	return ud.lb.WriteReturning(ctx, func(value *UserDataContent) float64 {
 		newStoredAlarm := &StoredAlarm{
 			Spec:               *spec,
 			Id:                 value.alarmId,
@@ -371,8 +402,8 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) floa
 	})
 }
 
-func (ud *UserData) registerSubscriber(ctx context.Context, client *MyClientInfo) {
-	ud.lb.Write(func(value *UserDataContent) {
+func (ud *UserData) registerSubscriber(ctx context.Context, client *MyClientInfo) error {
+	return ud.lb.Write(ctx, func(value *UserDataContent) {
 		value.subscribers[client] = true
 		slice := slices.Collect(maps.Values(value.alarms))
 		slices.SortFunc(slice, func(a *StoredAlarm, b *StoredAlarm) int {
@@ -391,14 +422,14 @@ func (ud *UserData) registerSubscriber(ctx context.Context, client *MyClientInfo
 	})
 }
 
-func (ud *UserData) unregisterSubscriber(client *MyClientInfo) {
-	ud.lb.Write(func(value *UserDataContent) {
+func (ud *UserData) unregisterSubscriber(ctx context.Context, client *MyClientInfo) error {
+	return ud.lb.Write(ctx, func(value *UserDataContent) {
 		delete(value.subscribers, client)
 	})
 }
 
-func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) {
-	ud.lb.Write(func(value *UserDataContent) {
+func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) error {
+	return ud.lb.Write(ctx, func(value *UserDataContent) {
 		alarm, exists := value.alarms[alarmId]
 		if !exists {
 			return
@@ -419,8 +450,8 @@ func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) {
 }
 
 // If ids is empty, dismisses all expired alarms
-func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) {
-	ud.lb.Write(func(value *UserDataContent) {
+func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) error {
+	return ud.lb.Write(ctx, func(value *UserDataContent) {
 		if len(ids) == 0 {
 			ids = value.expiredAlarms
 		}
@@ -447,8 +478,8 @@ func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) {
 	})
 }
 
-func (ud *UserData) pauseAlarm(ctx context.Context, pauseId float64) {
-	ud.lb.Write(func(udc *UserDataContent) {
+func (ud *UserData) pauseAlarm(ctx context.Context, pauseId float64) error {
+	return ud.lb.Write(ctx, func(udc *UserDataContent) {
 		_, isPausedAlready := udc.pausedAlarms[pauseId]
 		if isPausedAlready {
 			return
@@ -475,8 +506,8 @@ func (ud *UserData) pauseAlarm(ctx context.Context, pauseId float64) {
 	})
 }
 
-func (ud *UserData) continueAlarm(ctx context.Context, continueId float64) {
-	ud.lb.Write(func(udc *UserDataContent) {
+func (ud *UserData) continueAlarm(ctx context.Context, continueId float64) error {
+	return ud.lb.Write(ctx, func(udc *UserDataContent) {
 		_, wasPaused := udc.pausedAlarms[continueId]
 		if !wasPaused {
 			return
@@ -509,8 +540,8 @@ func (ud *UserData) continueAlarm(ctx context.Context, continueId float64) {
 	})
 }
 
-func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) {
-	ud.lb.Write(func(udc *UserDataContent) {
+func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) error {
+	return ud.lb.Write(ctx, func(udc *UserDataContent) {
 		l1 := len(udc.alarms)
 		delete(udc.alarms, cancelId)
 		if l1 == len(udc.alarms) {
@@ -530,19 +561,36 @@ func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) {
 }
 
 func main() {
+	log.SetFlags(log.Ltime | log.Lmicroseconds | log.Lshortfile)
 	ctx, stop := signal.NotifyContext(
 		context.Background(), os.Interrupt, syscall.SIGTERM,
 	)
 	defer stop()
 
 	hub := newHub(makeUserData())
-	hub.lb.Write(func(value *HubContent[UserData]) {
+	ctx2, cancel2 := context.WithTimeout(ctx, time.Second)
+	err := hub.lb.Write(ctx2, func(value *HubContent[UserData]) {
 		value.ThreadTimeout = time.Second * 5
 		value.On.Unregistered = func(e UnregisterItem[UserData]) {
-			hub.UserData.unregisterSubscriber(e.info)
+			fmt.Print("On unregister")
+			unregCtx, unregCancel := context.WithTimeout(context.Background(), time.Second*60)
+			err := hub.UserData.unregisterSubscriber(unregCtx, e.info)
+			if err != nil {
+				log.Printf("Could not unregister subscriber: %v\n", err)
+			}
+			unregCancel()
 		}
 	})
-	registerHandlers(hub)
+	if err != nil {
+		fmt.Printf("Could not initialize hub: %v\n", err)
+		return
+	}
+	err = registerHandlers(ctx2, hub)
+	if err != nil {
+		fmt.Printf("Could not register handlers: %v\n", err)
+		return
+	}
+	cancel2()
 
 	srv := &http.Server{
 		Addr: ":8080",
@@ -558,7 +606,9 @@ func main() {
 	}()
 
 	<-ctx.Done()
-	hub.Close()
+	hubCloseCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	hub.Close(hubCloseCtx)
+	cancel()
 	log.Println("shutting down, draining connections...")
 
 	shutdownCtx, cancel := context.WithTimeout(

@@ -51,8 +51,8 @@ type ClientInfo[T any] struct {
 	OpenThreads    Lockbox[OpenThreads[T]]
 }
 
-func (c *ClientInfo[T]) ObtainId() float64 {
-	return c.currId.WriteReturning(func(value *float64) float64 {
+func (c *ClientInfo[T]) ObtainId(ctx context.Context) (float64, error) {
+	return c.currId.WriteReturning(ctx, func(value *float64) float64 {
 		ret := (*value)
 		*value++
 		return ret
@@ -69,13 +69,13 @@ func (e *HubIsClosedError) Error() string {
 
 func newHub[T any](userData T) *Hub[T] {
 	return &Hub[T]{
-		lb: Lockbox[HubContent[T]]{
-			value: HubContent[T]{
+		lb: MakeLockbox(
+			HubContent[T]{
 				handlers:      make(map[string]HandlerFunc[T]),
 				clients:       make(map[*ClientInfo[T]]bool),
 				ThreadTimeout: -1,
 			},
-		},
+		),
 		UserData: userData,
 	}
 }
@@ -85,8 +85,12 @@ func Some[T any](value T) Optional[T] {
 }
 
 func SendMessageToClient[T any](ctx context.Context, info *ClientInfo[T], tag Optional[string], inReplyTo Optional[float64], body any) (float64, error) {
+	id, err := info.ObtainId(ctx)
+	if err != nil {
+		return 0, err
+	}
 	header := MessageHeader{
-		Id:        info.ObtainId(),
+		Id:        id,
 		InReplyTo: inReplyTo,
 		Tag:       tag,
 	}
@@ -113,17 +117,17 @@ func (c *ClientInfo[T]) StartRequestThreadCloseOnError[R any](ctx context.Contex
 	if err != nil {
 		closeError, ok := err.(websocket.CloseError)
 		if ok {
-			closeWithError(closeError.Code, closeError.Reason, c)
+			closeWithError(ctx, closeError.Code, closeError.Reason, c)
 		} else {
-			closeWithError(websocket.StatusInternalError, err.Error(), c)
+			closeWithError(ctx, websocket.StatusInternalError, err.Error(), c)
 		}
 		return Zero[R](), err
 	}
 	return val, nil
 }
 
-func (h *Hub[T]) Register(c *ClientInfo[T]) error {
-	return h.lb.WriteReturning(func(value *HubContent[T]) error {
+func (h *Hub[T]) Register(ctx context.Context, c *ClientInfo[T]) error {
+	err1, err2 := h.lb.WriteReturning(ctx, func(value *HubContent[T]) error {
 		if value.isClosed {
 			return &HubIsClosedErrorInstance
 		}
@@ -131,20 +135,27 @@ func (h *Hub[T]) Register(c *ClientInfo[T]) error {
 		value.clients[c] = true
 		return nil
 	})
+	if err2 != nil {
+		return err2
+	}
+	return err1
 }
 
-func (h *Hub[T]) Unregister(item UnregisterItem[T]) error {
-	onUnregistered, err := h.lb.WriteReturning2(func(value *HubContent[T]) (func(UnregisterItem[T]), error) {
+func (h *Hub[T]) Unregister(ctx context.Context, item UnregisterItem[T]) error {
+	onUnregistered, err1, err2 := h.lb.WriteReturning2(ctx, func(value *HubContent[T]) (func(UnregisterItem[T]), error) {
 		if value.isClosed {
 			return nil, &HubIsClosedErrorInstance
 		}
-		fmt.Println("Hub: unregister")
+		log.Println("Hub: unregister")
 		delete(value.clients, item.info)
 		item.info.conn.Close(item.status, item.reason)
 		return value.On.Unregistered, nil
 	})
-	if err != nil {
-		return err
+	if err2 != nil {
+		return err2
+	}
+	if err1 != nil {
+		return err1
 	}
 	if onUnregistered != nil {
 		onUnregistered(item)
@@ -152,8 +163,8 @@ func (h *Hub[T]) Unregister(item UnregisterItem[T]) error {
 	return nil
 }
 
-func (h *Hub[T]) Close() error {
-	return h.lb.WriteReturning(func(value *HubContent[T]) error {
+func (h *Hub[T]) Close(ctx context.Context) error {
+	err1, err2 := h.lb.WriteReturning(ctx, func(value *HubContent[T]) error {
 		if value.isClosed {
 			return &HubIsClosedErrorInstance
 		}
@@ -164,10 +175,14 @@ func (h *Hub[T]) Close() error {
 		}
 		return nil
 	})
+	if err2 != nil {
+		return err2
+	}
+	return err1
 }
 
-func (h *Hub[T]) ThreadTimeout() time.Duration {
-	return h.lb.ReadReturning(func(value *HubContent[T]) time.Duration {
+func (h *Hub[T]) ThreadTimeout(ctx context.Context) (time.Duration, error) {
+	return h.lb.ReadReturning(ctx, func(value *HubContent[T]) time.Duration {
 		return value.ThreadTimeout
 	})
 }
@@ -227,8 +242,9 @@ func MakeReceiver[T any](handlerData *HandlerData[T]) Receiver {
 
 type HandlerFunc[T any] func(hd *HandlerData[T], ctx context.Context, req []byte, responder Responder)
 
-func (h *Hub[T]) RegisterHandler(tag string, handler HandlerFunc[T]) error {
-	return h.lb.WriteReturning(func(value *HubContent[T]) error {
+// Returns error with ctx expires
+func (h *Hub[T]) RegisterHandler(ctx context.Context, tag string, handler HandlerFunc[T]) error {
+	err1, err2 := h.lb.WriteReturning(ctx, func(value *HubContent[T]) error {
 		if value.isClosed {
 			return &HubIsClosedErrorInstance
 		}
@@ -239,6 +255,10 @@ func (h *Hub[T]) RegisterHandler(tag string, handler HandlerFunc[T]) error {
 		value.handlers[tag] = handler
 		return nil
 	})
+	if err2 != nil {
+		return err2
+	}
+	return err1
 }
 
 func (info *ClientInfo[T]) Send(ctx context.Context, header MessageHeader, body any) error {
@@ -270,23 +290,23 @@ func (info *ClientInfo[T]) Send(ctx context.Context, header MessageHeader, body 
 	return nil
 }
 
-func (hd *HandlerData[T]) sendOnThread(ctx context.Context, body any, err error, inReplyTo Optional[float64], tag Optional[string]) {
+func (hd *HandlerData[T]) sendOnThread(ctx context.Context, body any, err error, inReplyTo Optional[float64], tag Optional[string]) error {
 	if err != nil {
 		protErr, ok := err.(websocket.CloseError)
 		if ok {
-			closeWithError(protErr.Code, protErr.Reason, hd.info)
+			closeWithError(ctx, protErr.Code, protErr.Reason, hd.info)
 		} else {
-			closeWithError(websocket.StatusInternalError, err.Error(), hd.info)
+			closeWithError(ctx, websocket.StatusInternalError, err.Error(), hd.info)
 		}
-		return
+		return nil
 	}
 
 	id, err := SendMessageToClient(ctx, hd.info, tag, inReplyTo, body)
 	if err != nil {
-		return // ctx is done
+		return err
 	}
 
-	hd.threads.Write(func(t *OpenThreads[T]) {
+	return hd.threads.Write(ctx, func(t *OpenThreads[T]) {
 		t.msgIdToHandlerData[id] = hd
 		t.handlerDataToMsgId[hd] = id
 	})
@@ -304,14 +324,16 @@ func handleIdDistribution(ctx context.Context, idChan chan float64) {
 	}
 }
 
-func closeWithError[T any](status websocket.StatusCode, reason string, info *ClientInfo[T]) {
+func closeWithError[T any](ctx context.Context, status websocket.StatusCode, reason string, info *ClientInfo[T]) {
 	if info.isUnregistered.Swap(true) {
 		return
 	}
 	if len(reason) > 125 {
 		reason = reason[:125]
 	}
-	info.hub.Unregister(UnregisterItem[T]{info, status, reason})
+	if err := info.hub.Unregister(ctx, UnregisterItem[T]{info, status, reason}); err != nil {
+		fmt.Printf("Could not unregister client: %v\n", err)
+	}
 	info.cancel()
 }
 
@@ -336,7 +358,7 @@ func (c *ClientInfo[T]) startThread[R any](ctx context.Context,
 	)
 	ret, err := handlerFn(handlerData, ctx3)
 	cancel3()
-	c.OpenThreads.Write(func(t *OpenThreads[T]) {
+	cleanUpErr := c.OpenThreads.Write(ctx, func(t *OpenThreads[T]) {
 		id := t.handlerDataToMsgId[handlerData]
 		l1 := len(t.handlerDataToMsgId)
 		delete(t.handlerDataToMsgId, handlerData)
@@ -344,6 +366,9 @@ func (c *ClientInfo[T]) startThread[R any](ctx context.Context,
 			delete(t.msgIdToHandlerData, id)
 		}
 	})
+	if cleanUpErr != nil {
+		fmt.Printf("Could not delete thread data from ClientInfo: %v\n", cleanUpErr)
+	}
 	return ret, err
 }
 
@@ -369,13 +394,18 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 			msgIdToHandlerData: make(map[float64]*HandlerData[T]),
 			handlerDataToMsgId: make(map[*HandlerData[T]]float64),
 		}),
+		currId: MakeLockbox(0.0),
 		cancel: cancel,
 	}
 	go handleIdDistribution(ctx, idChan)
 
-	hub.Register(info)
+	ctx2, cancel2 := context.WithTimeout(ctx, time.Second)
+	hub.Register(ctx2, info)
+	cancel2()
 	closeWithError := func(status websocket.StatusCode, reason string) {
-		closeWithError(status, reason, info)
+		ctx2, cancel2 := context.WithTimeout(ctx, time.Second)
+		closeWithError(ctx2, status, reason, info)
+		cancel2()
 	}
 	defer closeWithError(websocket.StatusNormalClosure, "")
 
@@ -402,9 +432,15 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Println(header)
 		if header.Tag.present {
-			handlerFn, threadTimeout := hub.lb.ReadReturning2(func(value *HubContent[T]) (HandlerFunc[T], time.Duration) {
+			ctx2, cancel2 := context.WithTimeout(ctx, time.Second)
+			handlerFn, threadTimeout, err := hub.lb.ReadReturning2(ctx2, func(value *HubContent[T]) (HandlerFunc[T], time.Duration) {
 				return value.handlers[header.Tag.value], value.ThreadTimeout
 			})
+			cancel2()
+			if err != nil {
+				closeWithError(websocket.StatusInternalError, err.Error())
+				return
+			}
 			if handlerFn == nil {
 				fmt.Printf("Client send invalid tag \"%v\"\n", header.Tag.value)
 				closeWithError(websocket.StatusProtocolError, "Invalid tag")
@@ -417,12 +453,18 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 					return struct{}{}, nil
 				})
 		} else {
-			data := info.OpenThreads.WriteReturning(func(t *OpenThreads[T]) *HandlerData[T] {
+			ctx2, cancel2 := context.WithTimeout(ctx, time.Second)
+			data, err := info.OpenThreads.WriteReturning(ctx2, func(t *OpenThreads[T]) *HandlerData[T] {
 				data := t.msgIdToHandlerData[header.InReplyTo.value]
 				delete(t.msgIdToHandlerData, header.InReplyTo.value)
 				delete(t.handlerDataToMsgId, data)
 				return data
 			})
+			cancel2()
+			if err != nil {
+				closeWithError(websocket.StatusInternalError, err.Error())
+				return
+			}
 			if data == nil {
 				continue
 			}
