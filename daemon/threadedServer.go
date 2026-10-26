@@ -334,9 +334,11 @@ func closeWithError[T any](ctx context.Context, status websocket.StatusCode, rea
 		reason = reason[:125]
 	}
 	info.cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	if err := info.hub.Unregister(ctx, UnregisterItem[T]{info, status, reason}); err != nil {
 		fmt.Printf("Could not unregister client: %v\n", err)
 	}
+	cancel()
 }
 
 type OpenThreads[T any] struct {
