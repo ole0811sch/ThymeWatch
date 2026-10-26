@@ -48,7 +48,9 @@ type ClientInfo[T any] struct {
 	conn           *websocket.Conn
 	isUnregistered *atomic.Bool
 	cancel         context.CancelFunc
-	OpenThreads    Lockbox[OpenThreads[T]]
+	// context representing the lifetime of the connection
+	ctx         context.Context
+	OpenThreads Lockbox[OpenThreads[T]]
 }
 
 func (c *ClientInfo[T]) ObtainId(ctx context.Context) (float64, error) {
@@ -331,10 +333,10 @@ func closeWithError[T any](ctx context.Context, status websocket.StatusCode, rea
 	if len(reason) > 125 {
 		reason = reason[:125]
 	}
+	info.cancel()
 	if err := info.hub.Unregister(ctx, UnregisterItem[T]{info, status, reason}); err != nil {
 		fmt.Printf("Could not unregister client: %v\n", err)
 	}
-	info.cancel()
 }
 
 type OpenThreads[T any] struct {
@@ -352,23 +354,28 @@ func (c *ClientInfo[T]) startThread[R any](ctx context.Context,
 		in:      make(chan Pair[[]byte, float64]),
 		threads: &c.OpenThreads,
 	}
+	defer func() {
+		cleanUpCtx, cleanUpCancel := context.WithTimeout(c.ctx, time.Second)
+		cleanUpErr := c.OpenThreads.Write(cleanUpCtx, func(t *OpenThreads[T]) {
+			id := t.handlerDataToMsgId[handlerData]
+			l1 := len(t.handlerDataToMsgId)
+			delete(t.handlerDataToMsgId, handlerData)
+			if len(t.handlerDataToMsgId) < l1 {
+				delete(t.msgIdToHandlerData, id)
+			}
+		})
+		if cleanUpErr != nil {
+			log.Printf("Could not delete thread data from ClientInfo: %v\n", cleanUpErr)
+		}
+		cleanUpCancel()
+	}()
+
 	ctx3, cancel3 := context.WithTimeout(
 		ctx,
 		timeout,
 	)
 	ret, err := handlerFn(handlerData, ctx3)
 	cancel3()
-	cleanUpErr := c.OpenThreads.Write(ctx, func(t *OpenThreads[T]) {
-		id := t.handlerDataToMsgId[handlerData]
-		l1 := len(t.handlerDataToMsgId)
-		delete(t.handlerDataToMsgId, handlerData)
-		if len(t.handlerDataToMsgId) < l1 {
-			delete(t.msgIdToHandlerData, id)
-		}
-	})
-	if cleanUpErr != nil {
-		fmt.Printf("Could not delete thread data from ClientInfo: %v\n", cleanUpErr)
-	}
 	return ret, err
 }
 
@@ -395,6 +402,7 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 			handlerDataToMsgId: make(map[*HandlerData[T]]float64),
 		}),
 		currId: MakeLockbox(0.0),
+		ctx:    ctx,
 		cancel: cancel,
 	}
 	go handleIdDistribution(ctx, idChan)
@@ -415,7 +423,8 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 		cancel2()
 		if err != nil {
 			fmt.Printf("Handler: err read, %v\n", err)
-			return // context cancelled or connection closed
+			closeWithError(websocket.StatusInternalError, "Could not read from client")
+			return
 		}
 
 		endHeader := slices.Index(msg, '\n')

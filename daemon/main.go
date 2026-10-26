@@ -391,7 +391,9 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (flo
 		wg := sync.WaitGroup{}
 		for info := range value.subscribers {
 			wg.Go(func() {
-				err := SendAlarmsToClient(ctx, info, []*StoredAlarm{newStoredAlarm}, false)
+				ctxPerSub, cancelPerSub := DerivedFromTwoContexts(ctx, info.ctx)
+				err := SendAlarmsToClient(ctxPerSub, info, []*StoredAlarm{newStoredAlarm}, false)
+				cancelPerSub()
 				if err != nil {
 					fmt.Println("Could not notify of new alarm: ", err)
 				}
@@ -403,8 +405,14 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (flo
 }
 
 func (ud *UserData) registerSubscriber(ctx context.Context, client *MyClientInfo) error {
-	return ud.lb.Write(ctx, func(value *UserDataContent) {
+	err := ud.lb.Write(ctx, func(value *UserDataContent) {
 		value.subscribers[client] = true
+	})
+	if err != nil {
+		log.Printf("Could not register subscriber: %v\n", err)
+		return err
+	}
+	err, err2 := ud.lb.ReadReturning(ctx, func(value *UserDataContent) error {
 		slice := slices.Collect(maps.Values(value.alarms))
 		slices.SortFunc(slice, func(a *StoredAlarm, b *StoredAlarm) int {
 			if a.Spec.StartedAt.Before(b.Spec.StartedAt) {
@@ -415,11 +423,20 @@ func (ud *UserData) registerSubscriber(ctx context.Context, client *MyClientInfo
 			}
 			return 1
 		})
-		err := SendAlarmsToClient(ctx, client, slice, true)
+		err = SendAlarmsToClient(ctx, client, slice, true)
 		if err != nil {
-			fmt.Println("Could not send alarms to new subscriber: ", err)
+			log.Println("Could not send alarms to new subscriber: ", err)
+			return err
 		}
+		return nil
 	})
+	if err2 != nil {
+		return err2
+	}
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (ud *UserData) unregisterSubscriber(ctx context.Context, client *MyClientInfo) error {
@@ -439,7 +456,9 @@ func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) error {
 		wg := sync.WaitGroup{}
 		for info := range value.subscribers {
 			wg.Go(func() {
-				err := SendExpiredAlarmToClient(ctx, info, alarmId)
+				ctxPerSub, cancelPerSub := DerivedFromTwoContexts(ctx, info.ctx)
+				err := SendExpiredAlarmToClient(ctxPerSub, info, alarmId)
+				cancelPerSub()
 				if err != nil {
 					fmt.Println("Could not send alarm expiration to client: ", err)
 				}
@@ -467,7 +486,9 @@ func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) error {
 		wg := sync.WaitGroup{}
 		for info := range value.subscribers {
 			wg.Go(func() {
-				err := SendAlarmsDismissedToClient(ctx, info, ids)
+				ctxPerSub, cancelPerSub := DerivedFromTwoContexts(ctx, info.ctx)
+				err := SendAlarmsDismissedToClient(ctxPerSub, info, ids)
+				cancelPerSub()
 				if err != nil {
 					fmt.Println("Could not send alarm dismissal to client: ", err)
 				}
@@ -496,7 +517,9 @@ func (ud *UserData) pauseAlarm(ctx context.Context, pauseId float64) error {
 		wg := sync.WaitGroup{}
 		for info := range udc.subscribers {
 			wg.Go(func() {
-				err := SendAlarmPausedToClient(ctx, info, pauseId, pausedAtTime)
+				ctxPerSub, cancelPerSub := DerivedFromTwoContexts(ctx, info.ctx)
+				err := SendAlarmPausedToClient(ctxPerSub, info, pauseId, pausedAtTime)
+				cancelPerSub()
 				if err != nil {
 					fmt.Println("Could not send alarm pausing to client: ", err)
 				}
@@ -529,7 +552,9 @@ func (ud *UserData) continueAlarm(ctx context.Context, continueId float64) error
 		for info := range udc.subscribers {
 			wg.Go(
 				func() {
-					err := SendAlarmContinuedToClient(ctx, info, continueId, storedAlarm.Spec.ExpiryTime)
+					ctxPerSub, cancelPerSub := DerivedFromTwoContexts(ctx, info.ctx)
+					err := SendAlarmContinuedToClient(ctxPerSub, info, continueId, storedAlarm.Spec.ExpiryTime)
+					cancelPerSub()
 					if err != nil {
 						fmt.Println("Could not send alarm continuation to client: ", err)
 					}
@@ -550,7 +575,9 @@ func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) error {
 		wg := sync.WaitGroup{}
 		for info := range udc.subscribers {
 			wg.Go(func() {
-				err := SendCanceledAlarmToClient(ctx, info, cancelId)
+				ctxPerSub, cancelPerSub := DerivedFromTwoContexts(ctx, info.ctx)
+				err := SendCanceledAlarmToClient(ctxPerSub, info, cancelId)
+				cancelPerSub()
 				if err != nil {
 					fmt.Println("Could not send alarm cancelation to client: ", err)
 				}
