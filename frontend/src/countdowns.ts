@@ -1,3 +1,5 @@
+import { ref } from 'vue'
+
 export interface Countdown {
   startedAt: Date
   expiryTimestamp: Date
@@ -10,12 +12,17 @@ export interface Countdown {
 }
 
 const countdowns: Map<number, Countdown> = new Map()
+export const expiredUndismissedAlarms = ref(new Set<number>())
 
 /**
  * @returns copy of countdowns map
  */
 export function getCountdowns(): Map<number, Countdown> {
   return new Map(countdowns)
+}
+
+export function getCountdown(id: number): Readonly<Countdown> | undefined {
+  return countdowns.get(id)
 }
 
 export function addCountdown(cd: Countdown): Countdown {
@@ -26,6 +33,7 @@ export function addCountdown(cd: Countdown): Countdown {
 }
 
 export function removeCountdown(id: number): void {
+  dismissCountdown(id)
   const cd = countdowns.get(id)
   if (!cd) {
     return
@@ -81,7 +89,21 @@ export function expireCountdown(id: number): void {
   }
 
   cd.isExpired = true
+  if (!cd.isDismissed) {
+    expiredUndismissedAlarms.value.add(id)
+  }
   handler('expired', cd)
+}
+
+export function dismissCountdown(id: number): void {
+  const cd = countdowns.get(id)
+  if (!cd || cd.isDismissed || !cd.isExpired) {
+    return
+  }
+
+  cd.isDismissed = true
+  expiredUndismissedAlarms.value.delete(id)
+  handler('dismissed', cd)
 }
 
 function handler(type: CountdownEventType, cd: Countdown): void {
@@ -89,7 +111,14 @@ function handler(type: CountdownEventType, cd: Countdown): void {
   handlers[type].get(null)?.forEach((handler) => handler(cd))
 }
 
-const countdownEventTypes = ['expired', 'new', 'removed', 'paused', 'continued'] as const
+const countdownEventTypes = [
+  'expired',
+  'new',
+  'removed',
+  'paused',
+  'continued',
+  'dismissed',
+] as const
 const handlers: Record<
   CountdownEventType,
   Map<number | null, Set<(cd: Countdown) => void>>

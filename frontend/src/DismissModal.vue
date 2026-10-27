@@ -1,14 +1,26 @@
 <script setup lang="ts">
-import { closeAllNotifications, notifs } from './notifs'
 import { audio as audio2 } from './audio'
-import { onBeforeMount, onMounted, onUnmounted, useTemplateRef } from 'vue'
+import { computed, onBeforeMount, onMounted, onUnmounted, useTemplateRef } from 'vue'
 import { Connection as Connection2 } from './connection'
 import { Context } from './context'
+import { expiredUndismissedAlarms, getCountdown } from './countdowns'
 
 const audio = audio2
 const Connection = Connection2
 const dialog = useTemplateRef('dialog')
 const ctx = Context.background()
+const expiredUndismissedAlarmObjs = computed(() =>
+  [...expiredUndismissedAlarms.value.values()]
+    .map((id) => getCountdown(id))
+    .filter((cd) => cd !== undefined)
+    .sort((a, b) =>
+      a.expiryTimestamp.getTime() < b.expiryTimestamp.getTime()
+        ? -1
+        : a.expiryTimestamp.getTime() === b.expiryTimestamp.getTime()
+          ? 0
+          : 1,
+    ),
+)
 onBeforeMount(() => {
   if (document.activeElement instanceof HTMLElement) {
     document.activeElement.blur()
@@ -40,17 +52,13 @@ onUnmounted(() => {
     @close="
       async () => {
         audio.stop()
-        await Connection.getInstance().dismissAlarms(
-          ctx,
-          [...notifs.values()].map((n) => n.countdown.id),
-        )
-        closeAllNotifications()
+        await Connection.getInstance().dismissAlarms(ctx, [...expiredUndismissedAlarms.values()])
       }
     "
   >
     <h1>Expired alarms</h1>
     <ul>
-      <li v-for="[id, { countdown: cd }] in notifs" :key="id">
+      <li v-for="cd in expiredUndismissedAlarmObjs" :key="cd.id">
         {{ cd.name ?? 'Unnamed' }}: Expired at {{ cd.expiryTimestamp.toLocaleTimeString() }}
       </li>
     </ul>

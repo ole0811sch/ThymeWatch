@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch, type Ref } from 'vue'
 import CountdownList from './CountdownList.vue'
-import { notifs } from './notifs.ts'
 import DismissModal from './DismissModal.vue'
 import { Connection } from './connection.ts'
 import { Context } from './context.ts'
 import { debounceRef } from './debounce.ts'
+import { expiredUndismissedAlarms } from './countdowns.ts'
 
 const nameInputRef = useTemplateRef('name-input')
 const listRef = useTemplateRef('list')
@@ -147,7 +147,7 @@ onUnmounted(() => {
     </div>
     <div style="flex: 2"></div>
   </div>
-  <DismissModal v-if="notifs.size > 0"></DismissModal>
+  <DismissModal v-if="expiredUndismissedAlarms.size > 0"></DismissModal>
 </template>
 
 <style scoped>

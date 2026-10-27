@@ -172,6 +172,8 @@ type StoredAlarm struct {
 	IsExpired          bool                `json:"isExpired"`
 	IsDismissed        bool                `json:"isDismissed"`
 	cancel             context.CancelFunc
+	// is nil until there is a notification
+	closeNotification func()
 }
 
 func (sa *StoredAlarm) ClonePtr() *StoredAlarm {
@@ -459,10 +461,10 @@ func (ud *UserData) unregisterSubscriber(ctx context.Context, client *MyClientIn
 }
 
 func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) error {
-	return ud.lb.Write(ctx, func(value *UserDataContent) {
+	exists, alarmName, err := ud.lb.WriteReturning2(ctx, func(value *UserDataContent) (bool, Optional[string]) {
 		alarm, exists := value.alarms[alarmId]
 		if !exists {
-			return
+			return false, Optional[string]{}
 		}
 		alarm.IsExpired = true
 		value.expiredAlarms = append(value.expiredAlarms, alarmId)
@@ -483,7 +485,58 @@ func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) error {
 			})
 		}
 		wg.Wait()
+		return true, alarm.Spec.Name
 	})
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	close := make(chan Void, 1)
+	go ud.notifyExpiredAlarm(close, alarmId, alarmName)
+	return nil
+}
+
+func (ud *UserData) notifyExpiredAlarm(close chan Void, alarmId float64, alarmName Optional[string]) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	title := "Alarm expired"
+	if alarmName.present {
+		title = fmt.Sprintf("Alarm \"%v\" expired", alarmName.value)
+	}
+	reason, err := Notify(ctx, title, "", func(id uint32) {
+		err := ud.lb.Write(ctx, func(value *UserDataContent) {
+			alarm, exists := value.alarms[alarmId]
+			if !exists {
+				return
+			}
+			alarm.closeNotification = func() {
+				select {
+				case close <- VVoid:
+				default:
+				}
+			}
+		})
+		if err != nil {
+			log.Println("Error while handling notifications:", err)
+		}
+		cancel()
+	}, close)
+	if err != nil {
+		log.Println("Error while handling notifications:", err)
+		return
+	}
+	switch reason {
+	case NotificationClosedReasonCall, NotificationClosedReasonDismissed:
+		ctxDismiss, cancelDismiss := context.WithTimeout(context.Background(), 5*time.Second)
+		err := ud.dismissAlarms(ctxDismiss, []float64{alarmId})
+		cancelDismiss()
+		if err != nil {
+			log.Println("Error while dismissing alarm:", err)
+		}
+	case NotificationClosedReasonUndefined:
+		log.Printf("Unexpected NotificationClosedReason %v", reason)
+	}
 }
 
 // If ids is empty, dismisses all expired alarms
@@ -500,6 +553,10 @@ func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) error {
 				continue
 			}
 			alarm.IsExpired = true
+			if alarm.closeNotification != nil {
+				alarm.closeNotification()
+				alarm.closeNotification = nil
+			}
 		}
 		value.expiredAlarms = nil
 		wg := sync.WaitGroup{}

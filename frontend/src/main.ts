@@ -5,14 +5,15 @@ import {
   addCountdown,
   continueCountdown,
   countdownEventTarget,
+  dismissCountdown,
   expireCountdown,
+  expiredUndismissedAlarms,
   pauseCountdown,
   removeAllCountdown,
   removeCountdown,
   type Countdown,
 } from './countdowns.ts'
 import { audio } from './audio.ts'
-import { closeNotification, newNotification, notifs } from './notifs.ts'
 import { Connection, type ConnectionEventMap } from './connection.ts'
 import { Abort, Context } from './context.ts'
 
@@ -64,7 +65,6 @@ conn.addEventListener(
   },
 )
 conn.addEventListener('cancelalarm', (alarmId) => {
-  closeNotification(alarmId)
   removeCountdown(alarmId)
 })
 conn.addEventListener('alarmpaused', ({ id, pausedAtTime }) => {
@@ -113,21 +113,7 @@ const onExpired = async (countdown: Countdown) => {
   if (countdown.isDismissed) {
     return
   }
-  const title = countdown.name ? `Timer expired: ${countdown.name}` : 'Timer expired'
   await audio.start()
-  if (Notification.permission === 'granted') {
-    const notif = newNotification(countdown, title, {
-      requireInteraction: true,
-    })
-    for (const type of ['close', 'click']) {
-      notif.addEventListener(type, (e) => {
-        audio.stop()
-      })
-    }
-  } else {
-    alert(title)
-    audio.stop()
-  }
 }
 countdownEventTarget.addEventListener('expired', onExpired)
 conn.addEventListener('expirealarm', (id) => {
@@ -135,6 +121,6 @@ conn.addEventListener('expirealarm', (id) => {
 })
 conn.addEventListener('alarmsdismissed', (ids) => {
   for (const id of ids) {
-    closeNotification(id)
+    dismissCountdown(id)
   }
 })
