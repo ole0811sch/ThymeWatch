@@ -21,7 +21,9 @@ type HubContent[T any] struct {
 		Unregistered func(e UnregisterItem[T])
 	}
 	ThreadTimeout time.Duration
-	isClosed      bool
+	// timeout for tasks in ClientInfo.Tasks
+	TaskTimeout time.Duration
+	isClosed    bool
 }
 
 // UserData can be accessed/modified without obtaining a lock (it is assumed to be synchronized internally)
@@ -41,6 +43,11 @@ type OutChanItem struct {
 	header MessageHeader
 }
 
+type ClientTask[T any] struct {
+	f    func(ctx context.Context, info *ClientInfo[T]) error
+	name string
+}
+
 type ClientInfo[T any] struct {
 	hub            *Hub[T]
 	currId         Lockbox[float64]
@@ -50,6 +57,8 @@ type ClientInfo[T any] struct {
 	// context representing the lifetime of the connection
 	ctx         context.Context
 	OpenThreads Lockbox[OpenThreads[T]]
+	// will be executed serially with ctx with timeout hub.TaskTimeout
+	Tasks chan ClientTask[T]
 }
 
 func (c *ClientInfo[T]) ObtainId(ctx context.Context) (float64, error) {
@@ -58,6 +67,15 @@ func (c *ClientInfo[T]) ObtainId(ctx context.Context) (float64, error) {
 		*value++
 		return ret
 	})
+}
+
+func (c *ClientInfo[T]) ScheduleTask(ctx context.Context, name string, task func(ctx context.Context, info *ClientInfo[T]) error) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case c.Tasks <- ClientTask[T]{name: name, f: task}:
+		return nil
+	}
 }
 
 type HubIsClosedError struct{}
@@ -75,6 +93,7 @@ func newHub[T any](userData T) *Hub[T] {
 				handlers:      make(map[string]HandlerFunc[T]),
 				clients:       make(map[*ClientInfo[T]]bool),
 				ThreadTimeout: 5 * time.Second,
+				TaskTimeout:   5 * time.Second,
 			},
 		),
 		UserData: userData,
@@ -380,6 +399,23 @@ func (c *ClientInfo[T]) startThread[R any](ctx context.Context,
 	return ret, err
 }
 
+func handleClientTaskQueue[T any](ctx context.Context, info *ClientInfo[T], timeout time.Duration) {
+	for {
+		var task ClientTask[T]
+		select {
+		case <-ctx.Done():
+			return
+		case task = <-info.Tasks:
+		}
+		taskCtx, taskCancel := context.WithTimeout(ctx, timeout)
+		err := task.f(taskCtx, info)
+		taskCancel()
+		if err != nil {
+			log.Printf("Could not execute client task \"%v\": %v", task.name, err.Error())
+		}
+	}
+}
+
 func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"localhost:5173"},
@@ -405,6 +441,7 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 		currId: MakeLockbox(0.0),
 		ctx:    ctx,
 		cancel: cancel,
+		Tasks:  make(chan ClientTask[T], 100),
 	}
 	go handleIdDistribution(ctx, idChan)
 
@@ -417,6 +454,13 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 		cancel2()
 	}
 	defer closeWithError(websocket.StatusNormalClosure, "")
+	taskTimeout, err := hub.lb.ReadReturning(ctx, func(value *HubContent[T]) time.Duration {
+		return value.TaskTimeout
+	})
+	if err != nil {
+		return
+	}
+	go handleClientTaskQueue(ctx, info, taskTimeout)
 
 	for {
 		ctx2, cancel2 := context.WithCancel(ctx)
