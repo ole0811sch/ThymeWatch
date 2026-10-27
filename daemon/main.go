@@ -76,9 +76,9 @@ var invalidValueError = websocket.CloseError{
 
 type AlarmSpecification struct {
 	// When paused, this is the expiry time when the alarm was paused
-	ExpiryTime time.Time `json:"expiryTime"`
-	Name       string    `json:"name"`
-	StartedAt  time.Time `json:"startedAt"`
+	ExpiryTime time.Time        `json:"expiryTime"`
+	Name       Optional[string] `json:"name"`
+	StartedAt  time.Time        `json:"startedAt"`
 }
 
 type CreateAlarmMessage AlarmSpecification

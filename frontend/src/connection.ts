@@ -219,7 +219,9 @@ export class Connection {
               typeof alarm.spec !== 'object' ||
               typeof alarm.isExpired !== 'boolean' ||
               typeof alarm.isDismissed !== 'boolean' ||
-              (alarm.spec.name !== undefined && typeof alarm.spec.name !== 'string') ||
+              (alarm.spec.name !== undefined &&
+                alarm.spec.name !== null &&
+                typeof alarm.spec.name !== 'string') ||
               typeof alarm.spec.expiryTime !== 'string' ||
               typeof alarm.spec.startedAt !== 'string'
             ) {
@@ -252,7 +254,7 @@ export class Connection {
         for (let i = 0; i < body.alarms.length; ++i) {
           this.emit('setalarm', {
             expiryTime: expiryDates[i]!,
-            name: body.alarms[i].spec.name,
+            name: body.alarms[i].spec.name ?? undefined,
             id: body.alarms[i].id,
             startedAt: startedAts[i]!,
             ketchup: body.ketchup,
