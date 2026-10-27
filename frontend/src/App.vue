@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, useTemplateRef, type Ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch, type Ref } from 'vue'
 import CountdownList from './CountdownList.vue'
 import { notifs } from './notifs.ts'
 import DismissModal from './DismissModal.vue'
 import { Connection } from './connection.ts'
 import { Context } from './context.ts'
+import { debounceRef } from './debounce.ts'
 
 const nameInputRef = useTemplateRef('name-input')
 const listRef = useTemplateRef('list')
@@ -14,6 +15,21 @@ const submitting: Ref<boolean> = ref(false)
 const ctx = Context.background()
 const isConnected: Ref<'uninitialized' | Connection['state']> = ref('uninitialized')
 const connection = Connection.getInstance()
+// prevent from toggling back to false too quickly
+const doShowReconnectBtn = debounceRef(
+  computed(() => isConnected.value === 'connecting' || isConnected.value === 'open'),
+  300,
+  (v) => v,
+)
+const setupTime = new Date()
+const doShowDisconnectedBar = debounceRef(
+  computed(() => {
+    const isStartupPhase = setupTime.getTime() + 2000 > Date.now()
+    return !isStartupPhase && (isConnected.value === 'connecting' || isConnected.value === 'closed')
+  }),
+  1000,
+)
+
 isConnected.value = connection.state
 connection.addEventListener('closed', () => (isConnected.value = 'closed'))
 connection.addEventListener('reconnected', () => (isConnected.value = 'open'))
@@ -34,7 +50,12 @@ const onSubmit = async () => {
     expiryTimestamp.setDate(expiryTimestamp.getDate() + 1)
   }
   submitting.value = true
-  await Connection.getInstance().createAlarm(ctx, expiryTimestamp, new Date(), nameInputRef.value.value || undefined)
+  await Connection.getInstance().createAlarm(
+    ctx,
+    expiryTimestamp,
+    new Date(),
+    nameInputRef.value.value || undefined,
+  )
   submitting.value = false
 }
 
@@ -72,13 +93,13 @@ onUnmounted(() => {
       padding: var(--box-padding);
       box-sizing: border-box;
     "
-    v-if="isConnected === 'connecting' || isConnected === 'closed'"
+    v-if="doShowDisconnectedBar"
   >
     <span style="margin-right: 0.5em"> The connection to the server was lost. </span>
     <button
       :style="{
         display: 'inline',
-        ...(isConnected === 'connecting' && {
+        ...(doShowReconnectBtn && {
           visibility: 'hidden',
           width: 0,
           paddingLeft: 0,
@@ -91,7 +112,7 @@ onUnmounted(() => {
     >
       Reconnect
     </button>
-    <span v-if="isConnected === 'connecting'">Reconnecting...</span>
+    <span v-if="doShowReconnectBtn">Reconnecting...</span>
     <span style="flex: 1"></span>
   </div>
   <div
