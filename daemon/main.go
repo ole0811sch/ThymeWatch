@@ -347,7 +347,7 @@ func SendExpiredAlarmToClient(ctx context.Context, info *MyClientInfo, alarmId f
 }
 
 func SendAlarmsDismissedToClient(ctx context.Context, info *MyClientInfo, ids []float64) error {
-	return SendAndWaitFor200(ctx, info, "ALARM_DISMISSED", AlarmsDismissedMessage{Ids: ids})
+	return SendAndWaitFor200(ctx, info, "ALARMS_DISMISSED", AlarmsDismissedMessage{Ids: ids})
 }
 
 func SendAlarmPausedToClient(ctx context.Context, info *MyClientInfo, id float64, pausedAtTime time.Time) error {
