@@ -301,7 +301,6 @@ func SendAndWaitFor200(ctx context.Context, info *MyClientInfo, tag string, body
 	if err != nil {
 		return err
 	}
-	timeout = time.Duration(math.MaxInt64)
 	_, ret := info.StartRequestThreadCloseOnError(ctx, timeout, tag,
 		body,
 		func(hd *HandlerData[UserData], ctx2 context.Context, receiver Receiver) (Void, error) {
