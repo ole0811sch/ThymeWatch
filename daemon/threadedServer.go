@@ -20,7 +20,6 @@ type HubContent[T any] struct {
 	On struct {
 		Unregistered func(e UnregisterItem[T])
 	}
-	// negative for no timeout
 	ThreadTimeout time.Duration
 	isClosed      bool
 }
@@ -75,7 +74,7 @@ func newHub[T any](userData T) *Hub[T] {
 			HubContent[T]{
 				handlers:      make(map[string]HandlerFunc[T]),
 				clients:       make(map[*ClientInfo[T]]bool),
-				ThreadTimeout: -1,
+				ThreadTimeout: 5 * time.Second,
 			},
 		),
 		UserData: userData,
