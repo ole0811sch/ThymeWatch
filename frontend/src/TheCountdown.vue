@@ -1,11 +1,8 @@
 <script setup lang="ts">
 import { onUnmounted, ref, useTemplateRef } from 'vue'
-import {
-  countdownEventTarget,
-  type Countdown,
-} from './countdowns'
+import { countdownEventTarget, type Countdown } from './countdowns'
 import { Connection } from './connection'
-import { Context } from './context'
+import { Abort, Context } from './context'
 const { countdown, detailsName } = defineProps<{ countdown: Countdown; detailsName: string }>()
 
 const displayText = ref('')
@@ -51,7 +48,10 @@ const onRequestRemove = async () => {
   removing.value = true
   const ctx2 = Context.withTimeout(5000, ctx)
   const conn = Connection.getInstance()
-  conn.cancelAlarm(ctx2, countdown.id)
+  const response = await conn.cancelAlarm(ctx2, countdown.id)
+  if (response instanceof Error || response instanceof Abort) {
+    console.error('Could not cancel alarm', response)
+  }
   removing.value = false
   ctx2.cancel()
 }
