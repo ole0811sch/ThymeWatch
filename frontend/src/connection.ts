@@ -138,7 +138,11 @@ export class Connection {
     let res: (response: [MessageHeader, MessageBody] | Error) => void
     const prom = new Promise<[MessageHeader, MessageBody] | Error>((res_) => void (res = res_))
     this.promises.set(id, res!)
-    return Promise.race([prom, ctx.reason])
+    const winner = await Promise.race([prom, ctx.reason])
+    if (winner instanceof Abort) {
+      this.promises.delete(id)
+    }
+    return winner
   }
 
   close() {
