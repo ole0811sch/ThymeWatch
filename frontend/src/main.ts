@@ -4,17 +4,13 @@ import router from './router'
 import {
   addCountdown,
   continueCountdown,
-  countdownEventTarget,
   dismissCountdown,
   expireCountdown,
-  expiredUndismissedAlarms,
   pauseCountdown,
   removeAllCountdown,
   removeCountdown,
-  type Countdown,
 } from './countdowns.ts'
-import { audio } from './audio.ts'
-import { Connection, type ConnectionEventMap } from './connection.ts'
+import { Connection } from './connection.ts'
 import { Abort, Context } from './context.ts'
 
 const app = createApp(App)
@@ -109,13 +105,6 @@ if (conn.state === 'closed') {
   tryReconnected()
 }
 
-const onExpired = async (countdown: Countdown) => {
-  if (countdown.isDismissed) {
-    return
-  }
-  await audio.start()
-}
-countdownEventTarget.addEventListener('expired', onExpired)
 conn.addEventListener('expirealarm', (id) => {
   expireCountdown(id)
 })

@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { audio as audio2 } from './audio'
 import { computed, onBeforeMount, onMounted, onUnmounted, useTemplateRef } from 'vue'
 import { Connection as Connection2 } from './connection'
 import { Context } from './context'
 import { expiredUndismissedAlarms, getCountdown } from './countdowns'
 
-const audio = audio2
 const Connection = Connection2
 const dialog = useTemplateRef('dialog')
 const ctx = Context.background()
@@ -31,7 +29,6 @@ onMounted(() => {
 })
 onUnmounted(() => {
   ctx.abort()
-  audio.stop()
 })
 </script>
 
@@ -51,7 +48,6 @@ onUnmounted(() => {
     "
     @close="
       async () => {
-        audio.stop()
         await Connection.getInstance().dismissAlarms(ctx, [...expiredUndismissedAlarms.values()])
       }
     "

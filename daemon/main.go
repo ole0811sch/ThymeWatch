@@ -18,6 +18,8 @@ import (
 	"github.com/samber/lo"
 )
 
+var ALARM_PATH = []string{"assets", "Alarm01.mp3"}
+
 type UserDataContent struct {
 	subscribers map[*MyClientInfo]bool
 	// alarms that have expired but aren't dismissed
@@ -28,7 +30,8 @@ type UserDataContent struct {
 }
 
 type UserData struct {
-	lb Lockbox[UserDataContent]
+	sharedAlarmSound SharedAlarmSound
+	lb               Lockbox[UserDataContent]
 }
 
 type (
@@ -299,6 +302,7 @@ func registerHandlers(ctx context.Context, hub *MyHub) error {
 
 func makeUserData() UserData {
 	return UserData{
+		sharedAlarmSound: MakeShareAlarmSound(ALARM_PATH),
 		lb: MakeLockbox(
 			UserDataContent{
 				subscribers:  make(map[*MyClientInfo]bool),
@@ -369,13 +373,30 @@ func (ud *UserData) startAlarm(alarm *StoredAlarm) {
 	id := alarm.Id
 	go func() {
 		<-ctx2.Done()
-		if ctx2.Err() == context.DeadlineExceeded {
-			// alarm must have expired, since only the new deadline triggered
-			ctx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
-			ud.expireAlarm(ctx3, id)
-			cancel3()
+		defer cancel2()
+		if ctx2.Err() != context.DeadlineExceeded {
+			return
 		}
-		cancel2()
+		// alarm must have expired, since only the new deadline triggered
+		ctx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
+		err := ud.expireAlarm(ctx3, id)
+		cancel3()
+		if err == nil {
+			return
+		}
+		log.Printf("Error while handling expired alarm: %v", err)
+		go func() {
+			ctxNotif, cancelNotif := context.WithTimeout(context.Background(), 5*time.Second)
+			_, errNotif := Notify(ctxNotif, "Error while handling expired alarm",
+				fmt.Sprintf("Reason: %v", err),
+				func(id uint32) { cancelNotif() }, nil, NotificationOptions{
+					expireTimeout: 0, urgency: 2,
+				})
+			if errNotif == nil {
+				return
+			}
+			log.Printf("Could not notify about error while handling expired alarm: %v\n", errNotif)
+		}()
 	}()
 }
 
@@ -388,6 +409,25 @@ func (ud *UserData) stopAlarm(alarm *StoredAlarm) {
 }
 
 func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (float64, error) {
+	if maContext == nil {
+		go func() {
+			err := InitAudio()
+			if err == nil {
+				return
+			}
+			log.Printf("Could not initialize audio: %v", err)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			_, err = Notify(ctx, "Could not initialize audio",
+				fmt.Sprintf("Alarms will play no sound\nReason: %v", err),
+				func(id uint32) { cancel() }, nil, NotificationOptions{
+					expireTimeout: 0,
+					urgency:       2,
+				})
+			if err != nil {
+				log.Printf("Could not notify about broken audio: %v", err)
+			}
+		}()
+	}
 	return ud.lb.WriteReturning(ctx, func(value *UserDataContent) float64 {
 		newStoredAlarm := &StoredAlarm{
 			Spec:               *spec,
@@ -495,7 +535,7 @@ func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) error {
 	}
 	close := make(chan Void, 1)
 	go ud.notifyExpiredAlarm(close, alarmId, alarmName)
-	return nil
+	return ud.sharedAlarmSound.Play(ctx)
 }
 
 func (ud *UserData) notifyExpiredAlarm(close chan Void, alarmId float64, alarmName Optional[string]) {
@@ -521,7 +561,7 @@ func (ud *UserData) notifyExpiredAlarm(close chan Void, alarmId float64, alarmNa
 			log.Println("Error while handling notifications:", err)
 		}
 		cancel()
-	}, close)
+	}, close, NotificationOptions{expireTimeout: 0, urgency: 2})
 	if err != nil {
 		log.Println("Error while handling notifications:", err)
 		return
@@ -576,6 +616,10 @@ func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) error {
 			})
 		}
 		wg.Wait()
+		err := ud.sharedAlarmSound.Stop(ctx)
+		if err != nil {
+			log.Printf("Could not stop alarm sound: %v\n", err)
+		}
 	})
 }
 

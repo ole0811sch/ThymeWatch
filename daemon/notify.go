@@ -19,12 +19,18 @@ const (
 
 type NotificationClosedReason int
 
+type NotificationOptions struct {
+	expireTimeout int32 // in ms, 0 for never, -1 for default
+	urgency       byte  // 0 low, 1 normal, 2 critical
+}
+
 // Sends notification, calls onSent once it is sent and returns when it is
 // closed. This call may continue past the lifetime of ctx, which isn't
 // respected after the notification has been sent. It should be canceled within
 // onSent. If at any point something is sent on close, the notification will be
 // closed.
-func Notify(ctx context.Context, title string, body string, onSent func(id uint32), close <-chan Void) (NotificationClosedReason, error) {
+// onSent and close may be nil
+func Notify(ctx context.Context, title string, body string, onSent func(id uint32), close <-chan Void, opts NotificationOptions) (NotificationClosedReason, error) {
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		return 1, err
@@ -58,7 +64,9 @@ func Notify(ctx context.Context, title string, body string, onSent func(id uint3
 	if err != nil {
 		return 1, err
 	}
-	onSent(id)
+	if onSent != nil {
+		onSent(id)
+	}
 
 	for {
 		var v *dbus.Signal
