@@ -190,11 +190,10 @@ func (udc *UserDataContent) CopySubscriberList() []*MyClientInfo {
 	return slices.Collect(maps.Keys(udc.subscribers))
 }
 
-var HandleCreateAlarm = func(hd *MyHandlerData, ctx context.Context, req []byte, responder Responder) {
+var HandleCreateAlarm = func(hd *MyHandlerData, ctx context.Context, req []byte, responder Responder) error {
 	message, err := ParseCreateAlarmMessage(req)
 	if err != nil {
-		responder(ctx, ProtocolErrorFromErr(err), true)
-		return
+		return ProtocolErrorFromErr(err)
 	}
 	alarmId, err := hd.hub.UserData.newAlarm(ctx, &AlarmSpecification{
 		ExpiryTime: message.ExpiryTime,
@@ -202,97 +201,95 @@ var HandleCreateAlarm = func(hd *MyHandlerData, ctx context.Context, req []byte,
 		StartedAt:  message.StartedAt,
 	})
 	if err != nil {
-		responder(ctx, err, true)
-		return
+		return err
 	}
 	ctx = ctxlog.WithAlarmId(ctx, alarmId)
 	ctxlog.Printf(ctx, "Set alarm for %v", message.ExpiryTime)
-	responder(ctx, AlarmCreatedMessage{alarmId}, false)
+	responder(ctx, AlarmCreatedMessage{alarmId})
+	return nil
 }
 
-var HandleSubscribe = func(hd *MyHandlerData, ctx context.Context, req []byte, responder Responder) {
+var HandleSubscribe = func(hd *MyHandlerData, ctx context.Context, req []byte, responder Responder) error {
 	_, err := ParseSubscribeMessage(req)
 	if err != nil {
-		responder(ctx, ProtocolErrorFromErr(err), true)
-		return
+		return ProtocolErrorFromErr(err)
 	}
 
 	err = hd.hub.UserData.registerSubscriber(ctx, hd.info)
 	if err != nil {
-		responder(ctx, err, true)
-		return
+		return err
 	}
 	ctxlog.Printf(ctx, "Client subscribed")
 
-	responder(ctx, StatusMessage{200}, false)
+	responder(ctx, StatusMessage{200})
+	return nil
 }
 
-var HandleDismissAlarms MyHandlerFunc = func(hd *MyHandlerData, ctx context.Context, req []byte, responder Responder) {
+var HandleDismissAlarms MyHandlerFunc = func(hd *MyHandlerData, ctx context.Context, req []byte, responder Responder) error {
 	message, err := ParseDismissAlarmsMessage(req)
 	if err != nil {
-		responder(ctx, ProtocolErrorFromErr(err), true)
-		return
+		return ProtocolErrorFromErr(err)
 	}
 
 	err = hd.hub.UserData.dismissAlarms(ctx, message.Ids)
 	if err != nil {
-		responder(ctx, err, true)
-		return
+		return err
 	}
 	ctxlog.Printf(ctx, "Dismissed alarms")
 
-	responder(ctx, StatusMessage{200}, false)
+	responder(ctx, StatusMessage{200})
+	return nil
 }
 
-var HandleCancelAlarm MyHandlerFunc = func(hd *MyHandlerData, ctx context.Context, req []byte, responder Responder) {
+var HandleCancelAlarm MyHandlerFunc = func(hd *MyHandlerData, ctx context.Context, req []byte, responder Responder) error {
 	message, err := ParseCancelAlarmMessage(req)
 	if err != nil {
-		responder(ctx, ProtocolErrorFromErr(err), true)
-		return
+		return err
 	}
 	ctx = ctxlog.WithAlarmId(ctx, message.Id)
 
 	err = hd.hub.UserData.cancelAlarm(ctx, message.Id)
 	if err != nil {
-		responder(ctx, err, true)
+		responder(ctx, err)
 	}
 	ctxlog.Printf(ctx, "Canceled alarm")
 
-	responder(ctx, StatusMessage{200}, false)
+	responder(ctx, StatusMessage{200})
+	return nil
 }
 
-var HandlePauseAlarm MyHandlerFunc = func(hd *HandlerData[UserData], ctx context.Context, req []byte, responder Responder) {
+var HandlePauseAlarm MyHandlerFunc = func(hd *HandlerData[UserData], ctx context.Context, req []byte, responder Responder) error {
 	message, err := ParsePauseAlarmMessage(req)
 	if err != nil {
-		responder(ctx, ProtocolErrorFromErr(err), true)
-		return
+		return ProtocolErrorFromErr(err)
 	}
 	ctx = ctxlog.WithAlarmId(ctx, message.Id)
 
 	err = hd.hub.UserData.pauseAlarm(ctx, message.Id)
 	if err != nil {
-		responder(ctx, err, true)
+		return err
 	}
 	ctxlog.Printf(ctx, "Paused alarm")
 
-	responder(ctx, StatusMessage{200}, false)
+	responder(ctx, StatusMessage{200})
+	return nil
 }
 
-var HandleContinueAlarm MyHandlerFunc = func(hd *HandlerData[UserData], ctx context.Context, req []byte, responder Responder) {
+var HandleContinueAlarm MyHandlerFunc = func(hd *HandlerData[UserData], ctx context.Context, req []byte, responder Responder) error {
 	message, err := ParseContinueAlarmMessage(req)
 	if err != nil {
-		responder(ctx, ProtocolErrorFromErr(err), true)
-		return
+		return ProtocolErrorFromErr(err)
 	}
 	ctx = ctxlog.WithAlarmId(ctx, message.Id)
 
 	err = hd.hub.UserData.continueAlarm(ctx, message.Id)
 	if err != nil {
-		responder(ctx, err, true)
+		return err
 	}
 	ctxlog.Printf(ctx, "Continued alarm")
 
-	responder(ctx, StatusMessage{200}, false)
+	responder(ctx, StatusMessage{200})
+	return nil
 }
 
 func registerHandlers(ctx context.Context, hub *MyHub) error {

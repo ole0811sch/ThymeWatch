@@ -139,8 +139,20 @@ func (c *ClientInfo[T]) StartRequestThread[R any](ctx context.Context,
 	threadCtx := context.WithValue(ctx, ctxlog.TagKey, tag)
 	return c.startThread(threadCtx, threadTimeout, func(handlerData *HandlerData[T], ctx context.Context) (R, error) {
 		handlerData.sendOnThread(ctx, body, nil, Optional[float64]{}, Some(tag))
-		return handlerFn(handlerData, ctx, MakeReceiver(handlerData))
+		ret, err := handlerFn(handlerData, ctx, MakeReceiver(handlerData))
+		if err == nil {
+			ctxlog.Printf(ctx, "Client handled request successfully")
+		}
+		return ret, err
 	})
+}
+
+func (c *ClientInfo[T]) CloseDueToError(ctx context.Context, err error) {
+	if closeError, ok := err.(websocket.CloseError); ok {
+		closeWithError(ctx, closeError.Code, closeError.Reason, c)
+	} else {
+		closeWithError(ctx, websocket.StatusInternalError, err.Error(), c)
+	}
 }
 
 func (c *ClientInfo[T]) StartRequestThreadCloseOnError[R any](ctx context.Context,
@@ -150,12 +162,7 @@ func (c *ClientInfo[T]) StartRequestThreadCloseOnError[R any](ctx context.Contex
 ) (R, error) {
 	val, err := c.StartRequestThread(ctx, threadTimeout, tag, body, handlerFn)
 	if err != nil {
-		closeError, ok := err.(websocket.CloseError)
-		if ok {
-			closeWithError(ctx, closeError.Code, closeError.Reason, c)
-		} else {
-			closeWithError(ctx, websocket.StatusInternalError, err.Error(), c)
-		}
+		c.CloseDueToError(ctx, err)
 		return Zero[R](), err
 	}
 	return val, nil
@@ -239,24 +246,19 @@ type HandlerData[T any] struct {
 }
 
 type (
-	Responder func(ctx context.Context, body any, isErr bool) (Receiver, error)
+	Responder func(ctx context.Context, body any) (Receiver, error)
 	Receiver  func(context.Context) ([]byte, Responder, error)
 )
 
 func MakeSender[T any](replyingTo float64, handlerData *HandlerData[T]) Responder {
 	used := false
-	return func(ctx context.Context, data any, isErr bool) (Receiver, error) {
+	return func(ctx context.Context, data any) (Receiver, error) {
 		if used {
 			return nil, fmt.Errorf("Sender was used already")
 		}
 		used = true
-		if isErr {
-			handlerData.sendOnThread(ctx, nil, data.(error), Some(replyingTo), Optional[string]{})
-			return nil, nil
-		} else {
-			handlerData.sendOnThread(ctx, data, nil, Some(replyingTo), Optional[string]{})
-			return MakeReceiver(handlerData), nil
-		}
+		handlerData.sendOnThread(ctx, data, nil, Some(replyingTo), Optional[string]{})
+		return MakeReceiver(handlerData), nil
 	}
 }
 
@@ -276,7 +278,7 @@ func MakeReceiver[T any](handlerData *HandlerData[T]) Receiver {
 	}
 }
 
-type HandlerFunc[T any] func(hd *HandlerData[T], ctx context.Context, req []byte, responder Responder)
+type HandlerFunc[T any] func(hd *HandlerData[T], ctx context.Context, req []byte, responder Responder) error
 
 // Returns error with ctx expires
 func (h *Hub[T]) RegisterHandler(ctx context.Context, tag string, handler HandlerFunc[T]) error {
@@ -511,10 +513,15 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 			}
 			handlerCtx := context.WithValue(ctx, ctxlog.TagKey, header.Tag.value)
 			go info.startThread(handlerCtx, threadTimeout,
-				func(handlerData *HandlerData[T], ctx context.Context) (struct{}, error) {
-					handlerFn(handlerData, ctx, msg[endHeader+1:],
+				func(handlerData *HandlerData[T], ctx context.Context) (Void, error) {
+					err := handlerFn(handlerData, ctx, msg[endHeader+1:],
 						MakeSender(header.Id, handlerData))
-					return struct{}{}, nil
+					if err != nil {
+						info.CloseDueToError(ctx, err)
+					} else {
+						ctxlog.Printf(ctx, "Request handled successfully")
+					}
+					return VVoid, err
 				})
 		} else {
 			ctx2, cancel2 := context.WithTimeout(ctx, time.Second)
