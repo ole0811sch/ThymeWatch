@@ -47,6 +47,8 @@ type OutChanItem struct {
 type ClientTask[T any] struct {
 	f    func(ctx context.Context, info *ClientInfo[T]) error
 	name string
+	// only for ctx.Values()
+	ctx context.Context
 }
 
 type ClientInfo[T any] struct {
@@ -86,7 +88,7 @@ func (c *ClientInfo[T]) ScheduleTask(ctx context.Context, name string, task func
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case c.Tasks <- ClientTask[T]{name: name, f: task}:
+	case c.Tasks <- ClientTask[T]{name: name, f: task, ctx: ctx}:
 		return nil
 	}
 }
@@ -416,10 +418,13 @@ func handleClientTaskQueue[T any](ctx context.Context, info *ClientInfo[T], time
 			return
 		case task = <-info.Tasks:
 		}
-		taskCtx := context.WithValue(ctx, ctxlog.ClientTaskKey, task.name)
-		taskCtx2, taskCancel2 := context.WithTimeout(taskCtx, timeout)
+		taskCtx := context.WithoutCancel(task.ctx)
+		taskCtx, cancelTask := DerivedFromTwoContexts(taskCtx, ctx)
+		taskCtx = context.WithValue(taskCtx, ctxlog.ClientTaskKey, task.name)
+		taskCtx2, cancelTask2 := context.WithTimeout(taskCtx, timeout)
 		err := task.f(taskCtx2, info)
-		taskCancel2()
+		cancelTask()
+		cancelTask2()
 		if err != nil {
 			ctxlog.Printf(taskCtx, "Could not execute client task: %v", err.Error())
 		} else {

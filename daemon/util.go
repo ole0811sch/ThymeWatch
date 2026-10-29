@@ -18,9 +18,10 @@ type Void = struct{}
 
 var VVoid = struct{}{}
 
+// the returned context is only derived from ctxA in the strict sense. In particular, it doesn't have the values from ctxB.
 func DerivedFromTwoContexts(ctxA context.Context, ctxB context.Context) (context.Context, context.CancelFunc) {
-	ctxCpy, cancelCpy := context.WithCancel(ctxA)
-	ctxJoined, cancelJoined := context.WithCancel(ctxB)
+	ctxCpy, cancelCpy := context.WithCancel(ctxB)
+	ctxJoined, cancelJoined := context.WithCancel(ctxA)
 	context.AfterFunc(ctxCpy, cancelJoined)
 	return ctxJoined, cancelCpy
 }
