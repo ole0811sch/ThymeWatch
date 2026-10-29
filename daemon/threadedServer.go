@@ -332,18 +332,6 @@ func (hd *HandlerData[T]) sendOnThread(ctx context.Context, body any, err error,
 	})
 }
 
-func handleIdDistribution(ctx context.Context, idChan chan float64) {
-	id := 0.0
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case idChan <- id:
-			id++
-		}
-	}
-}
-
 func closeWithError[T any](ctx context.Context, status websocket.StatusCode, reason string, info *ClientInfo[T]) {
 	if info.isUnregistered.Swap(true) {
 		return
@@ -427,7 +415,6 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 
-	idChan := make(chan float64)
 	isUnregistered := atomic.Bool{}
 
 	info := &ClientInfo[T]{
@@ -443,7 +430,6 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 		cancel: cancel,
 		Tasks:  make(chan ClientTask[T], 100),
 	}
-	go handleIdDistribution(ctx, idChan)
 
 	ctx2, cancel2 := context.WithTimeout(ctx, time.Second)
 	hub.Register(ctx2, info)
