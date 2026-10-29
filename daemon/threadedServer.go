@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"math/rand/v2"
 	"net/http"
 	"slices"
 	"sync/atomic"
@@ -184,6 +183,7 @@ func (h *Hub[T]) Register(ctx context.Context, c *ClientInfo[T]) error {
 }
 
 func (h *Hub[T]) Unregister(ctx context.Context, item UnregisterItem[T]) error {
+	ctx = context.WithValue(ctx, ctxlog.ClientIdKey, item.info.Id)
 	onUnregistered, err1, err2 := h.lb.WriteReturning2(ctx, func(value *HubContent[T]) (func(UnregisterItem[T]), error) {
 		if value.isClosed {
 			return nil, &HubIsClosedErrorInstance
@@ -402,6 +402,7 @@ func (c *ClientInfo[T]) startThread[R any](ctx context.Context,
 		context.WithValue(ctx, ctxlog.TraceIdKey, handlerData.TraceId),
 		timeout,
 	)
+	ctx3 = context.WithValue(ctx3, ctxlog.ClientIdKey, c.Id)
 	ret, err := handlerFn(handlerData, ctx3)
 	cancel3()
 	return ret, err
@@ -435,13 +436,13 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientId := rand.Int()
+	clientId := lastClientId.Add(1)
 	ctx, cancel := context.WithCancel(context.WithValue(r.Context(), ctxlog.ClientIdKey, clientId))
 
 	isUnregistered := atomic.Bool{}
 
 	info := &ClientInfo[T]{
-		Id:             lastClientId.Add(1),
+		Id:             clientId,
 		hub:            hub,
 		conn:           conn,
 		isUnregistered: &isUnregistered,
@@ -455,7 +456,6 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 		Tasks:  make(chan ClientTask[T], 100),
 	}
 
-	ctx = context.WithValue(ctx, ctxlog.ClientIdKey, info.Id)
 	ctx2, cancel2 := context.WithTimeout(ctx, time.Second)
 	hub.Register(ctx2, info)
 	cancel2()
