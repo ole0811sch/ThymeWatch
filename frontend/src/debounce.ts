@@ -35,3 +35,11 @@ export function debounceRef<T>(
   })
   return debouncedRef
 }
+
+export function temporarilyFixRef<T>(origRef: Ref<T>, value: T, forMs: number) {
+  const fixedRef = ref(value)
+  setTimeout(() => {
+    watch(origRef, (value) => (fixedRef.value = value), { immediate: true })
+  }, forMs)
+  return fixedRef
+}

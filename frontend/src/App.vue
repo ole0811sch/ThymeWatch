@@ -4,7 +4,7 @@ import CountdownList from './CountdownList.vue'
 import DismissModal from './DismissModal.vue'
 import { Connection } from './connection.ts'
 import { Context } from './context.ts'
-import { debounceRef } from './debounce.ts'
+import { debounceRef, temporarilyFixRef } from './debounce.ts'
 import { expiredUndismissedAlarms } from './countdowns.ts'
 
 const nameInputRef = useTemplateRef('name-input')
@@ -21,12 +21,12 @@ const doShowReconnectBtn = debounceRef(
   300,
   (v) => v,
 )
-const setupTime = new Date()
 const doShowDisconnectedBar = debounceRef(
-  computed(() => {
-    const isStartupPhase = setupTime.getTime() + 2000 > Date.now()
-    return !isStartupPhase && (isConnected.value === 'connecting' || isConnected.value === 'closed')
-  }),
+  temporarilyFixRef(
+    computed(() => isConnected.value === 'connecting' || isConnected.value === 'closed'),
+    false,
+    2000,
+  ),
   1000,
 )
 
