@@ -16,7 +16,7 @@ const ctx = Context.background()
 const isConnected: Ref<'uninitialized' | Connection['state']> = ref('uninitialized')
 const connection = Connection.getInstance()
 // prevent from toggling back to false too quickly
-const doShowReconnectBtn = debounceRef(
+const hideShowReconnectBtn = debounceRef(
   computed(() => isConnected.value === 'connecting' || isConnected.value === 'open'),
   300,
   (v) => v,
@@ -99,7 +99,7 @@ onUnmounted(() => {
     <button
       :style="{
         display: 'inline',
-        ...(doShowReconnectBtn && {
+        ...(hideShowReconnectBtn && {
           visibility: 'hidden',
           width: 0,
           paddingLeft: 0,
@@ -112,7 +112,7 @@ onUnmounted(() => {
     >
       Reconnect
     </button>
-    <span v-if="doShowReconnectBtn">Reconnecting...</span>
+    <span v-if="hideShowReconnectBtn">Reconnecting...</span>
     <span style="flex: 1"></span>
   </div>
   <div
