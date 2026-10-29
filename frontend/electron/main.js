@@ -1,56 +1,49 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, session } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { registerWebContents, startServer } from './server.js'
 
-if (!app.requestSingleInstanceLock()) {
-  app.quit()
-} else {
-  const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-  /** @type {BrowserWindow=} */
-  let window
+/** @type {BrowserWindow=} */
+let window
 
-  function createWindow() {
-    window = new BrowserWindow({
-      width: 800,
-      height: 600,
-      autoHideMenuBar: true,
-      title: 'ThymeWatch',
-      webPreferences: {
-        preload: path.join(__dirname, 'preload.js'),
-      },
-    })
-    if ((process.env.NODE_ENV ?? 'production') === 'production') {
-      window.removeMenu()
-    }
-
-    window.loadFile(path.join(__dirname, '../dist-electron/index.html'))
+function createWindow() {
+  window = new BrowserWindow({
+    width: 800,
+    height: 600,
+    autoHideMenuBar: true,
+    title: 'ThymeWatch',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+    },
+  })
+  if ((process.env.NODE_ENV ?? 'production') === 'production') {
+    window.removeMenu()
   }
 
-  app.whenReady().then(async () => {
-    createWindow()
-    await startServer()
+  window.loadFile(path.join(__dirname, '../dist-electron/index.html'))
+}
 
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow()
-      }
-    })
+app.whenReady().then(async () => {
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const requestHeaders = {
+      ...details.requestHeaders,
+      Origin: 'org.thymewatch://',
+    }
+    callback({ requestHeaders })
   })
+  createWindow()
 
-  app.on('window-all-closed', () => {
-    window = undefined
-  })
-
-  app.on('second-instance', () => {
-    if (window) {
-      if (window.isMinimized()) {
-        window.restore()
-      }
-      window.focus()
-    } else {
+  app.on('activate', () => {
+    if (!window) {
       createWindow()
     }
   })
-}
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit()
+  }
+  window = undefined
+})

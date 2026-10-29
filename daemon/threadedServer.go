@@ -436,7 +436,7 @@ func handleClientTaskQueue[T any](ctx context.Context, info *ClientInfo[T], time
 func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: []string{"localhost:5173"},
+		OriginPatterns: []string{"localhost:5173", "org.thymewatch://"},
 	})
 	if err != nil {
 		ctxlog.Printf(ctx, "accept failed: %v", err)
