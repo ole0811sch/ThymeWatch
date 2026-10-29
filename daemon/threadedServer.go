@@ -417,11 +417,13 @@ func handleClientTaskQueue[T any](ctx context.Context, info *ClientInfo[T], time
 		case task = <-info.Tasks:
 		}
 		taskCtx := context.WithValue(ctx, ctxlog.ClientTaskKey, task.name)
-		taskCtx, taskCancel := context.WithTimeout(taskCtx, timeout)
-		err := task.f(taskCtx, info)
-		taskCancel()
+		taskCtx2, taskCancel2 := context.WithTimeout(taskCtx, timeout)
+		err := task.f(taskCtx2, info)
+		taskCancel2()
 		if err != nil {
-			ctxlog.Printf(ctx, "Could not execute client task: %v", err.Error())
+			ctxlog.Printf(taskCtx, "Could not execute client task: %v", err.Error())
+		} else {
+			ctxlog.Printf(taskCtx, "Client task executed successfully")
 		}
 	}
 }

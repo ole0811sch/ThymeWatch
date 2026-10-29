@@ -29,7 +29,7 @@ var (
 	AlarmIdKey    = &CtxLogKey{"alarmId", "aId", HasType[float64]}
 	ClientTaskKey = &CtxLogKey{"clientTask", "ctask", HasType[string]}
 	// defines order in logs
-	keys []*CtxLogKey = []*CtxLogKey{TagKey, TraceIdKey, ClientIdKey, AlarmIdKey}
+	keys []*CtxLogKey = []*CtxLogKey{TagKey, ClientTaskKey, TraceIdKey, ClientIdKey, AlarmIdKey}
 )
 
 func HasType[T any](v any) bool {
