@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"log"
+	"math/rand/v2"
 	"net/http"
 	"slices"
 	"sync/atomic"
 	"time"
+
+	"org.thymewatch.daemon/ctxlog"
 
 	"github.com/coder/websocket"
 )
@@ -59,7 +61,19 @@ type ClientInfo[T any] struct {
 	OpenThreads Lockbox[OpenThreads[T]]
 	// will be executed serially with ctx with timeout hub.TaskTimeout
 	Tasks chan ClientTask[T]
+	// for logging
+	Id int32
 }
+
+var (
+	lastTraceId  = atomic.Int32{}
+	lastClientId = atomic.Int32{}
+	_            = func() Void {
+		lastTraceId.Store(-1)
+		lastClientId.Store(-1)
+		return VVoid
+	}()
+)
 
 func (c *ClientInfo[T]) ObtainId(ctx context.Context) (float64, error) {
 	return c.currId.WriteReturning(ctx, func(value *float64) float64 {
@@ -122,7 +136,8 @@ func (c *ClientInfo[T]) StartRequestThread[R any](ctx context.Context,
 	handlerFn func(hd *HandlerData[T], ctx context.Context,
 		receiver Receiver) (R, error),
 ) (R, error) {
-	return c.startThread(ctx, threadTimeout, func(handlerData *HandlerData[T], ctx context.Context) (R, error) {
+	threadCtx := context.WithValue(ctx, ctxlog.TagKey, tag)
+	return c.startThread(threadCtx, threadTimeout, func(handlerData *HandlerData[T], ctx context.Context) (R, error) {
 		handlerData.sendOnThread(ctx, body, nil, Optional[float64]{}, Some(tag))
 		return handlerFn(handlerData, ctx, MakeReceiver(handlerData))
 	})
@@ -151,7 +166,7 @@ func (h *Hub[T]) Register(ctx context.Context, c *ClientInfo[T]) error {
 		if value.isClosed {
 			return &HubIsClosedErrorInstance
 		}
-		fmt.Println("Hub: register")
+		ctxlog.Printf(ctx, "Register client")
 		value.clients[c] = true
 		return nil
 	})
@@ -166,9 +181,9 @@ func (h *Hub[T]) Unregister(ctx context.Context, item UnregisterItem[T]) error {
 		if value.isClosed {
 			return nil, &HubIsClosedErrorInstance
 		}
-		log.Println("Hub: unregister")
 		delete(value.clients, item.info)
 		item.info.conn.Close(item.status, item.reason)
+		ctxlog.Printf(ctx, "Close client, status=%v, reason=%v", item.status, item.reason)
 		return value.On.Unregistered, nil
 	})
 	if err2 != nil {
@@ -189,7 +204,7 @@ func (h *Hub[T]) Close(ctx context.Context) error {
 			return &HubIsClosedErrorInstance
 		}
 		value.isClosed = true
-		fmt.Println("Hub: close")
+		ctxlog.Printf(ctx, "Close hub")
 		for c := range value.clients {
 			c.conn.CloseNow()
 		}
@@ -220,6 +235,7 @@ type HandlerData[T any] struct {
 	// (data, id), received by us
 	in      chan Pair[[]byte, float64]
 	threads *Lockbox[OpenThreads[T]]
+	TraceId int32
 }
 
 type (
@@ -342,7 +358,7 @@ func closeWithError[T any](ctx context.Context, status websocket.StatusCode, rea
 	info.cancel()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	if err := info.hub.Unregister(ctx, UnregisterItem[T]{info, status, reason}); err != nil {
-		fmt.Printf("Could not unregister client: %v\n", err)
+		ctxlog.Printf(ctx, "Could not unregister client: %v", err)
 	}
 	cancel()
 }
@@ -361,9 +377,11 @@ func (c *ClientInfo[T]) startThread[R any](ctx context.Context,
 		info:    c,
 		in:      make(chan Pair[[]byte, float64]),
 		threads: &c.OpenThreads,
+		TraceId: lastTraceId.Add(1),
 	}
 	defer func() {
-		cleanUpCtx, cleanUpCancel := context.WithTimeout(c.ctx, time.Second)
+		clientCtx := context.WithValue(c.ctx, ctxlog.TraceIdKey, handlerData.TraceId)
+		cleanUpCtx, cleanUpCancel := context.WithTimeout(clientCtx, time.Second)
 		cleanUpErr := c.OpenThreads.Write(cleanUpCtx, func(t *OpenThreads[T]) {
 			id := t.handlerDataToMsgId[handlerData]
 			l1 := len(t.handlerDataToMsgId)
@@ -373,13 +391,13 @@ func (c *ClientInfo[T]) startThread[R any](ctx context.Context,
 			}
 		})
 		if cleanUpErr != nil {
-			log.Printf("Could not delete thread data from ClientInfo: %v\n", cleanUpErr)
+			ctxlog.Printf(ctx, "Could not delete thread data from ClientInfo: %v\n", cleanUpErr)
 		}
 		cleanUpCancel()
 	}()
 
 	ctx3, cancel3 := context.WithTimeout(
-		ctx,
+		context.WithValue(ctx, ctxlog.TraceIdKey, handlerData.TraceId),
 		timeout,
 	)
 	ret, err := handlerFn(handlerData, ctx3)
@@ -395,29 +413,33 @@ func handleClientTaskQueue[T any](ctx context.Context, info *ClientInfo[T], time
 			return
 		case task = <-info.Tasks:
 		}
-		taskCtx, taskCancel := context.WithTimeout(ctx, timeout)
+		taskCtx := context.WithValue(ctx, ctxlog.ClientTaskKey, task.name)
+		taskCtx, taskCancel := context.WithTimeout(taskCtx, timeout)
 		err := task.f(taskCtx, info)
 		taskCancel()
 		if err != nil {
-			log.Printf("Could not execute client task \"%v\": %v", task.name, err.Error())
+			ctxlog.Printf(ctx, "Could not execute client task: %v", err.Error())
 		}
 	}
 }
 
 func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"localhost:5173"},
 	})
 	if err != nil {
-		log.Printf("accept failed: %v", err)
+		ctxlog.Printf(ctx, "accept failed: %v", err)
 		return
 	}
 
-	ctx, cancel := context.WithCancel(r.Context())
+	clientId := rand.Int()
+	ctx, cancel := context.WithCancel(context.WithValue(r.Context(), ctxlog.ClientIdKey, clientId))
 
 	isUnregistered := atomic.Bool{}
 
 	info := &ClientInfo[T]{
+		Id:             lastClientId.Add(1),
 		hub:            hub,
 		conn:           conn,
 		isUnregistered: &isUnregistered,
@@ -431,6 +453,7 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 		Tasks:  make(chan ClientTask[T], 100),
 	}
 
+	ctx = context.WithValue(ctx, ctxlog.ClientIdKey, info.Id)
 	ctx2, cancel2 := context.WithTimeout(ctx, time.Second)
 	hub.Register(ctx2, info)
 	cancel2()
@@ -453,24 +476,23 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 		_, msg, err := conn.Read(ctx2)
 		cancel2()
 		if err != nil {
-			fmt.Printf("Handler: err read, %v\n", err)
+			ctxlog.Printf(ctx, "Could not read from client: %v", err)
 			closeWithError(websocket.StatusInternalError, "Could not read from client")
 			return
 		}
 
 		endHeader := slices.Index(msg, '\n')
 		if endHeader == -1 {
+			ctxlog.Printf(ctx, "Receiver message without header")
 			closeWithError(websocket.StatusProtocolError, "Message does not start with header")
 			return
 		}
 		header := MessageHeader{}
-		fmt.Println(string(msg[:endHeader]))
 		err = json.Unmarshal(msg[:endHeader], &header)
 		if err != nil {
-			fmt.Println(err.Error())
+			ctxlog.Printf(ctx, "Receiver invalid header: %v", err)
 			closeWithError(websocket.StatusProtocolError, "Invalid header")
 		}
-		fmt.Println(header)
 		if header.Tag.present {
 			ctx2, cancel2 := context.WithTimeout(ctx, time.Second)
 			handlerFn, threadTimeout, err := hub.lb.ReadReturning2(ctx2, func(value *HubContent[T]) (HandlerFunc[T], time.Duration) {
@@ -478,15 +500,17 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 			})
 			cancel2()
 			if err != nil {
+				ctxlog.Printf(ctx2, "Could not access hub data: %v", err)
 				closeWithError(websocket.StatusInternalError, err.Error())
 				return
 			}
 			if handlerFn == nil {
-				fmt.Printf("Client send invalid tag \"%v\"\n", header.Tag.value)
+				ctxlog.Printf(ctx2, "Client send invalid tag \"%v\"", header.Tag.value)
 				closeWithError(websocket.StatusProtocolError, "Invalid tag")
 				return
 			}
-			go info.startThread(ctx, threadTimeout,
+			handlerCtx := context.WithValue(ctx, ctxlog.TagKey, header.Tag.value)
+			go info.startThread(handlerCtx, threadTimeout,
 				func(handlerData *HandlerData[T], ctx context.Context) (struct{}, error) {
 					handlerFn(handlerData, ctx, msg[endHeader+1:],
 						MakeSender(header.Id, handlerData))
@@ -502,6 +526,7 @@ func handleWS[T any](hub *Hub[T], w http.ResponseWriter, r *http.Request) {
 			})
 			cancel2()
 			if err != nil {
+				ctxlog.Printf(ctx2, "Could not update ClientInfo.OpenThreads: %v", err)
 				closeWithError(websocket.StatusInternalError, err.Error())
 				return
 			}

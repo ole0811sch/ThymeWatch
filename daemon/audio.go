@@ -8,13 +8,14 @@ import (
 
 	"github.com/gen2brain/malgo"
 	"github.com/tosone/minimp3"
+	"org.thymewatch.daemon/ctxlog"
 )
 
 var maContext *malgo.AllocatedContext
 
 func InitAudio() error {
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, func(message string) {
-		fmt.Printf("%v", message)
+		ctxlog.Printf(context.Background(), "[malgo] %v", message)
 	})
 	if err != nil {
 		return err

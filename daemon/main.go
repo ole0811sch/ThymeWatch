@@ -16,6 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/samber/lo"
+	"org.thymewatch.daemon/ctxlog"
 )
 
 var ALARM_PATH = []string{"assets", "Alarm01.mp3"}
@@ -195,8 +196,6 @@ var HandleCreateAlarm = func(hd *MyHandlerData, ctx context.Context, req []byte,
 		responder(ctx, ProtocolErrorFromErr(err), true)
 		return
 	}
-
-	fmt.Printf("Set alarm for %v", message.ExpiryTime)
 	alarmId, err := hd.hub.UserData.newAlarm(ctx, &AlarmSpecification{
 		ExpiryTime: message.ExpiryTime,
 		Name:       message.Name,
@@ -206,25 +205,24 @@ var HandleCreateAlarm = func(hd *MyHandlerData, ctx context.Context, req []byte,
 		responder(ctx, err, true)
 		return
 	}
+	ctx = ctxlog.WithAlarmId(ctx, alarmId)
+	ctxlog.Printf(ctx, "Set alarm for %v", message.ExpiryTime)
 	responder(ctx, AlarmCreatedMessage{alarmId}, false)
 }
 
 var HandleSubscribe = func(hd *MyHandlerData, ctx context.Context, req []byte, responder Responder) {
-	fmt.Println("Subscribe", string(req))
-	message, err := ParseSubscribeMessage(req)
+	_, err := ParseSubscribeMessage(req)
 	if err != nil {
-		fmt.Println("E1")
 		responder(ctx, ProtocolErrorFromErr(err), true)
 		return
 	}
-	_ = message
 
 	err = hd.hub.UserData.registerSubscriber(ctx, hd.info)
 	if err != nil {
 		responder(ctx, err, true)
 		return
 	}
-	fmt.Println("E2")
+	ctxlog.Printf(ctx, "Client subscribed")
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -241,6 +239,7 @@ var HandleDismissAlarms MyHandlerFunc = func(hd *MyHandlerData, ctx context.Cont
 		responder(ctx, err, true)
 		return
 	}
+	ctxlog.Printf(ctx, "Dismissed alarms")
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -251,11 +250,13 @@ var HandleCancelAlarm MyHandlerFunc = func(hd *MyHandlerData, ctx context.Contex
 		responder(ctx, ProtocolErrorFromErr(err), true)
 		return
 	}
+	ctx = ctxlog.WithAlarmId(ctx, message.Id)
 
 	err = hd.hub.UserData.cancelAlarm(ctx, message.Id)
 	if err != nil {
 		responder(ctx, err, true)
 	}
+	ctxlog.Printf(ctx, "Canceled alarm")
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -266,11 +267,13 @@ var HandlePauseAlarm MyHandlerFunc = func(hd *HandlerData[UserData], ctx context
 		responder(ctx, ProtocolErrorFromErr(err), true)
 		return
 	}
+	ctx = ctxlog.WithAlarmId(ctx, message.Id)
 
 	err = hd.hub.UserData.pauseAlarm(ctx, message.Id)
 	if err != nil {
 		responder(ctx, err, true)
 	}
+	ctxlog.Printf(ctx, "Paused alarm")
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -281,11 +284,13 @@ var HandleContinueAlarm MyHandlerFunc = func(hd *HandlerData[UserData], ctx cont
 		responder(ctx, ProtocolErrorFromErr(err), true)
 		return
 	}
+	ctx = ctxlog.WithAlarmId(ctx, message.Id)
 
 	err = hd.hub.UserData.continueAlarm(ctx, message.Id)
 	if err != nil {
 		responder(ctx, err, true)
 	}
+	ctxlog.Printf(ctx, "Continued alarm")
 
 	responder(ctx, StatusMessage{200}, false)
 }
@@ -335,7 +340,7 @@ func SendAndWaitFor200(ctx context.Context, info *MyClientInfo, tag string, body
 			return VVoid, nil
 		})
 	if ret != nil {
-		log.Printf("Error in request-thread: %v\n", ret)
+		ctxlog.Printf(ctx, "Error in request-thread: %v\n", ret)
 	}
 	return ret
 }
@@ -345,11 +350,11 @@ func SendAlarmsToClient(ctx context.Context, info *MyClientInfo, alarms []*Store
 }
 
 func SendCanceledAlarmToClient(ctx context.Context, info *MyClientInfo, alarmId float64) error {
-	return SendAndWaitFor200(ctx, info, "ALARM_CANCELED", AlarmCanceledMessage{Id: alarmId})
+	return SendAndWaitFor200(ctxlog.WithAlarmId(ctx, alarmId), info, "ALARM_CANCELED", AlarmCanceledMessage{Id: alarmId})
 }
 
 func SendExpiredAlarmToClient(ctx context.Context, info *MyClientInfo, alarmId float64) error {
-	return SendAndWaitFor200(ctx, info, "ALARM_EXPIRED", AlarmExpiredMessage{Id: alarmId})
+	return SendAndWaitFor200(ctxlog.WithAlarmId(ctx, alarmId), info, "ALARM_EXPIRED", AlarmExpiredMessage{Id: alarmId})
 }
 
 func SendAlarmsDismissedToClient(ctx context.Context, info *MyClientInfo, ids []float64) error {
@@ -357,15 +362,16 @@ func SendAlarmsDismissedToClient(ctx context.Context, info *MyClientInfo, ids []
 }
 
 func SendAlarmPausedToClient(ctx context.Context, info *MyClientInfo, id float64, pausedAtTime time.Time) error {
-	return SendAndWaitFor200(ctx, info, "ALARM_PAUSED", AlarmPausedMessage{Id: id, PausedAtTime: pausedAtTime})
+	return SendAndWaitFor200(ctxlog.WithAlarmId(ctx, id), info, "ALARM_PAUSED", AlarmPausedMessage{Id: id, PausedAtTime: pausedAtTime})
 }
 
 func SendAlarmContinuedToClient(ctx context.Context, info *MyClientInfo, id float64, newExpiryTime time.Time) error {
-	return SendAndWaitFor200(ctx, info, "ALARM_CONTINUED", AlarmContinuedMessage{Id: id, NewExpiryTime: newExpiryTime})
+	return SendAndWaitFor200(ctxlog.WithAlarmId(ctx, id), info, "ALARM_CONTINUED", AlarmContinuedMessage{Id: id, NewExpiryTime: newExpiryTime})
 }
 
 func (ud *UserData) startAlarm(alarm *StoredAlarm) {
-	ctx2, cancel2 := context.WithDeadline(context.Background(), alarm.Spec.ExpiryTime)
+	ctx := ctxlog.WithAlarmId(context.Background(), alarm.Id)
+	ctx2, cancel2 := context.WithDeadline(ctx, alarm.Spec.ExpiryTime)
 	if alarm.cancel != nil {
 		alarm.cancel()
 	}
@@ -378,15 +384,17 @@ func (ud *UserData) startAlarm(alarm *StoredAlarm) {
 			return
 		}
 		// alarm must have expired, since only the new deadline triggered
-		ctx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
+		ctxWithId := ctxlog.WithAlarmId(context.Background(), id)
+		ctx3, cancel3 := context.WithTimeout(ctxWithId, 5*time.Second)
 		err := ud.expireAlarm(ctx3, id)
 		cancel3()
 		if err == nil {
+			ctxlog.Printf(ctxWithId, "Alarm expired")
 			return
 		}
-		log.Printf("Error while handling expired alarm: %v", err)
+		ctxlog.Printf(ctxWithId, "Error while handling expired alarm: %v", err)
 		go func() {
-			ctxNotif, cancelNotif := context.WithTimeout(context.Background(), 5*time.Second)
+			ctxNotif, cancelNotif := context.WithTimeout(ctxWithId, 5*time.Second)
 			_, errNotif := Notify(ctxNotif, "Error while handling expired alarm",
 				fmt.Sprintf("Reason: %v", err),
 				func(id uint32) { cancelNotif() }, nil, NotificationOptions{
@@ -395,7 +403,7 @@ func (ud *UserData) startAlarm(alarm *StoredAlarm) {
 			if errNotif == nil {
 				return
 			}
-			log.Printf("Could not notify about error while handling expired alarm: %v\n", errNotif)
+			ctxlog.Printf(ctxWithId, "Could not notify about error while handling expired alarm: %v\n", errNotif)
 		}()
 	}()
 }
@@ -415,8 +423,8 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (flo
 			if err == nil {
 				return
 			}
-			log.Printf("Could not initialize audio: %v", err)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			ctxlog.Printf(ctx, "Could not initialize audio: %v", err)
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 			_, err = Notify(ctx, "Could not initialize audio",
 				fmt.Sprintf("Alarms will play no sound\nReason: %v", err),
 				func(id uint32) { cancel() }, nil, NotificationOptions{
@@ -424,7 +432,7 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (flo
 					urgency:       2,
 				})
 			if err != nil {
-				log.Printf("Could not notify about broken audio: %v", err)
+				ctxlog.Printf(ctx, "Could not notify about broken audio: %v", err)
 			}
 		}()
 	}
@@ -439,6 +447,7 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (flo
 		}
 		value.alarms[value.alarmId] = newStoredAlarm
 		value.alarmId++
+		ctx = ctxlog.WithAlarmId(ctx, newStoredAlarm.Id)
 		ud.startAlarm(newStoredAlarm)
 		newStoredAlarmClone := newStoredAlarm.ClonePtr()
 		wg := sync.WaitGroup{}
@@ -539,7 +548,8 @@ func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) error {
 }
 
 func (ud *UserData) notifyExpiredAlarm(close chan Void, alarmId float64, alarmName Optional[string]) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctxWithId := ctxlog.WithAlarmId(context.Background(), alarmId)
+	ctx, cancel := context.WithTimeout(ctxWithId, 5*time.Second)
 	title := "Alarm expired"
 	if alarmName.present {
 		title = fmt.Sprintf("Alarm \"%v\" expired", alarmName.value)
@@ -558,24 +568,24 @@ func (ud *UserData) notifyExpiredAlarm(close chan Void, alarmId float64, alarmNa
 			}
 		})
 		if err != nil {
-			log.Println("Error while handling notifications:", err)
+			ctxlog.Printf(ctx, "Error while handling notifications: %v", err)
 		}
 		cancel()
 	}, close, NotificationOptions{expireTimeout: 0, urgency: 2})
 	if err != nil {
-		log.Println("Error while handling notifications:", err)
+		ctxlog.Printf(ctx, "Error while handling notifications: %v", err)
 		return
 	}
 	switch reason {
 	case NotificationClosedReasonCall, NotificationClosedReasonDismissed:
-		ctxDismiss, cancelDismiss := context.WithTimeout(context.Background(), 5*time.Second)
+		ctxDismiss, cancelDismiss := context.WithTimeout(ctxWithId, 5*time.Second)
 		err := ud.dismissAlarms(ctxDismiss, []float64{alarmId})
 		cancelDismiss()
 		if err != nil {
-			log.Println("Error while dismissing alarm:", err)
+			ctxlog.Printf(ctx, "Error while dismissing alarm: %v", err)
 		}
 	case NotificationClosedReasonUndefined:
-		log.Printf("Unexpected NotificationClosedReason %v", reason)
+		ctxlog.Printf(ctxWithId, "Unexpected NotificationClosedReason %v", reason)
 	}
 }
 
@@ -618,7 +628,7 @@ func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) error {
 		wg.Wait()
 		err := ud.sharedAlarmSound.Stop(ctx)
 		if err != nil {
-			log.Printf("Could not stop alarm sound: %v\n", err)
+			ctxlog.Printf(ctx, "Could not stop alarm sound: %v\n", err)
 		}
 	})
 }
@@ -726,7 +736,7 @@ func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) error {
 }
 
 func main() {
-	log.SetFlags(log.Ltime | log.Lmicroseconds | log.Lshortfile)
+	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	ctx, stop := signal.NotifyContext(
 		context.Background(), os.Interrupt, syscall.SIGTERM,
 	)
@@ -737,25 +747,25 @@ func main() {
 	err := hub.lb.Write(ctx2, func(value *HubContent[UserData]) {
 		value.ThreadTimeout = time.Second * 5
 		value.On.Unregistered = func(e UnregisterItem[UserData]) {
-			fmt.Print("On unregister")
 			unregCtx, unregCancel := context.WithTimeout(context.Background(), time.Second*60)
 			err := hub.UserData.unregisterSubscriber(unregCtx, e.info)
 			if err != nil {
-				log.Printf("Could not unregister subscriber: %v\n", err)
+				ctxlog.Printf(ctx2, "Could not unregister subscriber: %v\n", err)
 			}
 			unregCancel()
 		}
 	})
 	if err != nil {
-		fmt.Printf("Could not initialize hub: %v\n", err)
+		cancel2()
+		ctxlog.Printf(ctx, "Could not initialize hub: %v\n", err)
 		return
 	}
 	err = registerHandlers(ctx2, hub)
+	cancel2()
 	if err != nil {
-		fmt.Printf("Could not register handlers: %v\n", err)
+		ctxlog.Printf(ctx, "Could not register handlers: %v\n", err)
 		return
 	}
-	cancel2()
 
 	srv := &http.Server{
 		Addr: ":8080",
@@ -774,7 +784,7 @@ func main() {
 	hubCloseCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	hub.Close(hubCloseCtx)
 	cancel()
-	log.Println("shutting down, draining connections...")
+	ctxlog.Printf(ctx, "shutting down, draining connections...")
 
 	shutdownCtx, cancel := context.WithTimeout(
 		context.Background(), 10*time.Second,

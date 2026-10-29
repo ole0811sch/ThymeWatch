@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"fmt"
 )
 
 type Optional[T any] struct {
@@ -33,7 +32,6 @@ func (opt *Optional[T]) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 		if err := json.UnmarshalDecode(dec, &v); err != nil {
 			return err
 		}
-		fmt.Println("Un1", v)
 		opt.present = true
 		opt.value = v
 	}
