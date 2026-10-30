@@ -707,10 +707,18 @@ func (ud *UserData) continueAlarm(ctx context.Context, continueId float64) error
 
 func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) error {
 	return ud.lb.Write(ctx, func(udc *UserDataContent) {
-		l1 := len(udc.alarms)
-		delete(udc.alarms, cancelId)
-		if l1 == len(udc.alarms) {
+		alarm, ok := udc.alarms[cancelId]
+		if !ok {
 			return
+		}
+		delete(udc.alarms, cancelId)
+		if alarm.closeNotification != nil {
+			alarm.closeNotification()
+			alarm.closeNotification = nil
+		}
+		err := ud.sharedAlarmSound.Stop(ctx)
+		if err != nil {
+			ctxlog.Printf(ctx, "Could not stop alarm sound: %v\n", err)
 		}
 		wg := sync.WaitGroup{}
 		for info := range udc.subscribers {
