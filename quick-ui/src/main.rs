@@ -1,19 +1,22 @@
 use std::process::{Command, Stdio};
 use std::sync::mpsc::Receiver;
 use std::sync::{LazyLock, mpsc};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use async_channel;
 use glib::{Propagation, clone};
-use gtk::gdk::{Display, ModifierType};
+use gtk::gdk::{Display as GDKDisplay, ModifierType};
 use gtk::{
     Application, ApplicationWindow, CssProvider, Entry, EventControllerKey, Label, ListBox,
     ListBoxRow, glib,
 };
 use gtk::{Widget, prelude::*};
-use reqwest::StatusCode;
 use tokio::runtime::Runtime;
 use tokio::time::sleep;
+
+use crate::websocket::SetAlarmError::TungsteniteError;
+use crate::websocket::set_alarm_ws;
+pub mod websocket;
 
 static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| Runtime::new().unwrap());
 
@@ -24,8 +27,11 @@ enum RequestState {
     Close,
 }
 
-const CLIENT_CMD: [&str; 1] =
-    ["/home/ole/Documents/code/ThymeWatch/frontend/release/0.0.0/ThymeWatch-Linux-0.0.0.AppImage"];
+const SERVER_CMD: [&str; 3] = [
+    "sh",
+    "-c",
+    "cd /home/ole/Documents/code/ThymeWatch/daemon && go run .",
+];
 
 fn launch(cmd: &'static [&'static str]) -> Result<Receiver<()>, ()> {
     let Ok(mut child) = Command::new(cmd[0])
@@ -71,7 +77,7 @@ label.success {
 
         // Add the provider to the default screen
         gtk::style_context_add_provider_for_display(
-            &Display::default().expect("Could not connect to a display."),
+            &GDKDisplay::default().expect("Could not connect to a display."),
             &provider,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
@@ -119,13 +125,23 @@ label.success {
                             let mut recv_server_terminated: Option<Receiver<()>> = None;
                             let response = loop {
                                 sender.send(RequestState::Started).await.unwrap();
-                                let status_code = set_alarm(minutes).await;
-                                let service_unavailable = status_code
-                                    .as_ref()
-                                    .is_ok_and(|c| *c == StatusCode::SERVICE_UNAVAILABLE);
-                                if status_code.as_ref().is_err_and(|e| e.is_connect())
-                                    || service_unavailable && recv_server_terminated.is_none()
-                                {
+                                let result = set_alarm_ws(minutes).await;
+                                let err = match result {
+                                    Ok(_) => break Ok(()),
+                                    Err(e) => e,
+                                };
+                                if match &err {
+                                    TungsteniteError(
+                                        tokio_tungstenite::tungstenite::Error::Io(e),
+                                    ) => {
+                                        dbg!(&e);
+                                        match e.kind() {
+                                            std::io::ErrorKind::ConnectionRefused => true,
+                                            _ => false,
+                                        }
+                                    }
+                                    _ => false,
+                                } {
                                     sender.send(RequestState::LaunchingServer).await.unwrap();
                                     match recv_server_terminated {
                                         Some(ref recv) => match recv.try_recv() {
@@ -137,7 +153,7 @@ label.success {
                                         },
                                         _ => (),
                                     };
-                                    match launch(&CLIENT_CMD) {
+                                    match launch(&SERVER_CMD) {
                                         Ok(receiver) => {
                                             recv_server_terminated = Some(receiver);
                                             continue;
@@ -146,22 +162,8 @@ label.success {
                                             break Err("Could not launch server".to_string());
                                         }
                                     }
-                                } else if service_unavailable
-                                {
-                                    continue;
                                 } else {
-                                    break status_code
-                                        .as_ref()
-                                        .map_err(|e| format!("{e}"))
-                                        .and_then(|code| {
-                                            if *code == StatusCode::OK {
-                                                Ok(())
-                                            } else {
-                                                Err(format!(
-                                                    "Failure. Server returned status code {code}"
-                                                ))
-                                            }
-                                        });
+                                    break Err(format!("{}", err.into_value()));
                                 }
                             };
 
@@ -251,19 +253,4 @@ label.success {
     ));
 
     application.run()
-}
-
-async fn set_alarm(minutes: f64) -> Result<StatusCode, reqwest::Error> {
-    let millis = (SystemTime::now() + Duration::try_from_secs_f64(minutes * 60.0).unwrap())
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_secs_f64()
-        * 1000.0;
-    let response = reqwest::Client::new()
-        .post("http://localhost:8091/alarm")
-        .query(&[("expirytime", millis.to_string())])
-        .send()
-        .await;
-
-    Ok(response?.status())
 }
