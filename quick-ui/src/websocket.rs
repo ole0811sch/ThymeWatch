@@ -26,9 +26,19 @@ struct CreateAlarmMessage<'a> {
     started_at: time::OffsetDateTime,
 }
 
+#[derive(Serialize)]
+struct DismissAlarmsMessage {
+    ids: Vec<f64>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 struct AlarmCreatedMessage {
     id: f64,
+}
+
+#[derive(Deserialize, Debug)]
+struct StatusMessage {
+    status: i32,
 }
 
 pub struct StringError {
@@ -85,6 +95,19 @@ pub async fn set_alarm_ws(minutes: f64) -> Result<(), RequestError> {
         name: None,
     };
     let _response: AlarmCreatedMessage = make_request("CREATE_ALARM", body).await?;
+
+    Ok(())
+}
+
+pub async fn dismiss_alarms() -> Result<(), RequestError> {
+    let response: StatusMessage =
+        make_request("DISMISS_ALARMS", DismissAlarmsMessage { ids: vec![] }).await?;
+
+    if response.status != 200 {
+        return Err(InternalError(Box::new(StringError {
+            msg: format!("Server returned status {}", response.status),
+        })));
+    }
 
     Ok(())
 }

@@ -7,7 +7,7 @@ use async_channel;
 use glib::{Propagation, clone};
 use gtk::gdk::{Display as GDKDisplay, ModifierType};
 use gtk::{
-    Application, ApplicationWindow, CssProvider, Entry, EventControllerKey, Label, ListBox,
+    Application, ApplicationWindow, Button, CssProvider, Entry, EventControllerKey, Label, ListBox,
     ListBoxRow, glib,
 };
 use gtk::{Widget, prelude::*};
@@ -21,8 +21,10 @@ pub mod websocket;
 static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| Runtime::new().unwrap());
 
 enum RequestState {
-    Started,
-    Response(Result<(), String>),
+    RequestCreateAlarm,
+    ResponseCreateAlarm(Result<(), String>),
+    ResponseDismissAlarms(Result<(), String>),
+    RequestDismissAlarms,
     LaunchingServer,
     Close,
 }
@@ -64,12 +66,12 @@ fn main() -> glib::ExitCode {
 :root, #list-box {
     background-color: rgba(0, 0, 0, 0);
 }
-label {
+label.info-text {
     background-color: red;
     border-style: none;
     border-radius: 1em;
 }
-label.success {
+label.info-text.success {
     background-color: green;
 }
 ",
@@ -100,6 +102,7 @@ label.success {
             let list_box = ListBox::new();
             list_box.set_widget_name("list-box");
             let label = Label::new(Some("Enter delay in minutes"));
+            label.add_css_class("info-text");
             let label_row = ListBoxRow::builder()
                 .selectable(false)
                 .child(&label)
@@ -109,6 +112,8 @@ label.success {
             entry.connect_activate(clone!(
                 #[strong]
                 label,
+                #[strong]
+                sender,
                 move |entry| {
                     let Ok(minutes) = entry.buffer().text().parse::<f64>() else {
                         label.set_label("Invalid number");
@@ -124,7 +129,7 @@ label.success {
                         async move {
                             let mut recv_server_terminated: Option<Receiver<()>> = None;
                             let response = loop {
-                                sender.send(RequestState::Started).await.unwrap();
+                                sender.send(RequestState::RequestCreateAlarm).await.unwrap();
                                 let result = set_alarm_ws(minutes).await;
                                 let err = match result {
                                     Ok(_) => break Ok(()),
@@ -168,7 +173,10 @@ label.success {
                             };
 
                             let is_ok = response.is_ok();
-                            sender.send(RequestState::Response(response)).await.unwrap();
+                            sender
+                                .send(RequestState::ResponseCreateAlarm(response))
+                                .await
+                                .unwrap();
                             if is_ok {
                                 sleep(Duration::from_secs_f32(0.5)).await;
                                 sender.send(RequestState::Close).await.unwrap();
@@ -177,6 +185,30 @@ label.success {
                     ));
                 }
             ));
+
+            let dismiss_btn = Button::builder().label("Dismiss expired alarms").build();
+
+            dismiss_btn.connect_clicked(move |_button| {
+                RUNTIME.spawn(clone!(
+                    #[strong]
+                    sender,
+                    async move {
+                        sender
+                            .send(RequestState::RequestDismissAlarms)
+                            .await
+                            .unwrap();
+                        let result = websocket::dismiss_alarms().await;
+                        sender
+                            .send(RequestState::ResponseDismissAlarms(
+                                result.map_err(|e| e.into_value().to_string()),
+                            ))
+                            .await
+                            .unwrap();
+                    }
+                ));
+            });
+            list_box.append(&dismiss_btn);
+
             glib::spawn_future_local(clone!(
                 #[weak]
                 application,
@@ -186,10 +218,13 @@ label.success {
                     loop {
                         let response = receiver.recv().await.unwrap();
                         match response {
-                            RequestState::Started => {
+                            RequestState::RequestCreateAlarm => {
                                 entry.set_sensitive(false);
                             }
-                            RequestState::Response(response) => match response {
+                            RequestState::RequestDismissAlarms => {
+                                dismiss_btn.set_sensitive(false);
+                            }
+                            RequestState::ResponseCreateAlarm(response) => match response {
                                 Ok(_) => {
                                     label.set_label("Timer was set");
                                     label.add_css_class("success");
@@ -200,6 +235,18 @@ label.success {
                                     label.set_label(&msg);
                                 }
                             },
+                            RequestState::ResponseDismissAlarms(response) => {
+                                match response {
+                                    Ok(_) => {
+                                        label.set_label("Alarms were dismissed");
+                                        label.add_css_class("success");
+                                    }
+                                    Err(msg) => {
+                                        label.set_label(&msg);
+                                    }
+                                }
+                                dismiss_btn.set_sensitive(true);
+                            }
                             RequestState::Close => {
                                 application.windows().iter().for_each(|w| w.close());
                             }
@@ -245,6 +292,7 @@ label.success {
                 .child(&entry)
                 .build();
             list_box.append(&entry_row);
+
             window.set_child(Some(&list_box));
 
             window.present();
