@@ -198,12 +198,17 @@ label.info-text.success {
                             .await
                             .unwrap();
                         let result = websocket::dismiss_alarms().await;
+                        let is_ok = result.is_ok();
                         sender
                             .send(RequestState::ResponseDismissAlarms(
                                 result.map_err(|e| e.into_value().to_string()),
                             ))
                             .await
                             .unwrap();
+                        if is_ok {
+                            sleep(Duration::from_secs_f32(0.5)).await;
+                            sender.send(RequestState::Close).await.unwrap();
+                        }
                     }
                 ));
             });
