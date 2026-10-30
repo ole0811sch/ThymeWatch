@@ -599,7 +599,7 @@ func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) error {
 				ids = ids[:len(ids)-1]
 				continue
 			}
-			alarm.IsExpired = true
+			alarm.IsDismissed = true
 			if alarm.closeNotification != nil {
 				alarm.closeNotification()
 				alarm.closeNotification = nil
