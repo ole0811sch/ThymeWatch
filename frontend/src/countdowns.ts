@@ -29,6 +29,15 @@ export function addCountdown(cd: Countdown): Countdown {
   const cdFull: Countdown = { ...cd }
   countdowns.set(cdFull.id, cdFull)
   handler('new', cdFull)
+  if (cdFull.isExpired && !cdFull.isDismissed) {
+    expiredUndismissedAlarms.value.add(cd.id)
+  }
+  if (cdFull.isExpired) {
+    handler('expired', cdFull)
+  }
+  if (cdFull.isDismissed) {
+    handler('dismissed', cdFull)
+  }
   return cdFull
 }
 
