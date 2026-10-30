@@ -19,7 +19,7 @@ const connection = Connection.getInstance()
 const hideShowReconnectBtn = debounceRef(
   computed(() => isConnected.value === 'connecting' || isConnected.value === 'open'),
   300,
-  (v) => v,
+  { doUpdateImmediately: (v) => v },
 )
 const doShowDisconnectedBar = debounceRef(
   temporarilyFixRef(

@@ -92,11 +92,33 @@ input::placeholder {
   color: var(--color-text-tertiary);
 }
 
-:focus-visible:focus-visible:focus-visible,
-button:focus:not(:active) {
+:focus-visible:focus-visible:focus-visible {
   border-color: rgba(0, 0, 0, 0);
   outline-width: 2px;
   outline-color: var(--color-contrast-intense);
   outline-offset: 0;
   outline-style: solid;
+}
+
+/*
+ * Next to elements with :focus-visible, we also show an indicator on buttons
+ * with :focus that aren't active. In order to prevent flashing (especially on
+ * Chrome), we delay the highlighter by 50ms.
+ */
+@keyframes delayedFocusIndicator {
+  0% {}
+  100% {
+    border-color: rgba(0, 0, 0, 0);
+    outline-width: 2px;
+    outline-color: var(--color-contrast-intense);
+    outline-offset: 0;
+    outline-style: solid;
+  }
+}
+
+button:focus:not(:active):not(.no-additional-focus-indicator) {
+  animation-name: delayedFocusIndicator;
+  animation-delay: 50ms;
+  animation-duration: 0ms;
+  animation-fill-mode: forwards;
 }
