@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use SetAlarmError::{InternalError, TungsteniteError};
+use RequestError::{InternalError, TungsteniteError};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -48,12 +48,12 @@ impl std::fmt::Debug for StringError {
 
 impl std::error::Error for StringError {}
 
-pub enum SetAlarmError {
+pub enum RequestError {
     InternalError(Box<dyn std::error::Error + Send>),
     TungsteniteError(tokio_tungstenite::tungstenite::Error),
 }
 
-impl SetAlarmError {
+impl RequestError {
     pub fn into_value(self: Self) -> Box<dyn std::error::Error> {
         match self {
             InternalError(e) => e,
@@ -62,7 +62,7 @@ impl SetAlarmError {
     }
 }
 
-impl<T> From<T> for SetAlarmError
+impl<T> From<T> for RequestError
 where
     T: std::error::Error + 'static + Send,
 {
@@ -71,18 +71,7 @@ where
     }
 }
 
-pub async fn set_alarm_ws(minutes: f64) -> Result<(), SetAlarmError> {
-    let ws = match connect_async("ws://localhost:8080").await {
-        Ok((ws, _)) => ws,
-        Err(e) => return Err(TungsteniteError(e)),
-    };
-    let (mut sink, mut source) = ws.split();
-
-    let header = MessageHeader {
-        id: 0.0,
-        in_reply_to: None,
-        tag: Some("CREATE_ALARM"),
-    };
+pub async fn set_alarm_ws(minutes: f64) -> Result<(), RequestError> {
     let now = OffsetDateTime::now_utc();
     let expiry_time = match OffsetDateTime::from_unix_timestamp_nanos(
         now.unix_timestamp_nanos() + (minutes * 60.0 * 1e9) as i128,
@@ -95,14 +84,37 @@ pub async fn set_alarm_ws(minutes: f64) -> Result<(), SetAlarmError> {
         started_at: now,
         name: None,
     };
+    let _response: AlarmCreatedMessage = make_request("CREATE_ALARM", body).await?;
+
+    Ok(())
+}
+
+pub async fn make_request<RequestT: Serialize, ResponseT: for<'a> Deserialize<'a>>(
+    tag: &str,
+    body: RequestT,
+) -> Result<ResponseT, RequestError> {
+    let mut ws = match connect_async("ws://localhost:8080").await {
+        Ok((ws, _)) => ws,
+        Err(e) => return Err(TungsteniteError(e)),
+    };
+    let header = MessageHeader {
+        id: 0.0,
+        in_reply_to: None,
+        tag: Some(tag),
+    };
     let msg =
         serde_json::ser::to_string(&header)? + "\n" + serde_json::ser::to_string(&body)?.as_str();
-    let _ = sink.send(Message::Text(msg.into())).await;
+    let _ = ws.send(Message::Text(msg.into())).await;
 
-    while let Some(msg) = source.next().await {
+    let response: ResponseT = loop {
+        let Some(msg) = ws.next().await else {
+            return Err(InternalError(Box::new(StringError {
+                msg: "Connection closed before request was handled".to_string(),
+            })));
+        };
         let msg = msg?;
         if msg.is_ping() {
-            sink.send(Message::Pong(Bytes::new())).await?;
+            ws.send(Message::Pong(Bytes::new())).await?;
         }
         if let Message::Close(frame) = msg {
             Err(StringError {
@@ -148,9 +160,13 @@ pub async fn set_alarm_ws(minutes: f64) -> Result<(), SetAlarmError> {
             Some(0.0) => (),
             _ => continue,
         }
-        let _body: AlarmCreatedMessage = serde_json::from_str(body_str)?;
-        break;
+        let body: ResponseT = serde_json::from_str(body_str)?;
+        break body;
+    };
+
+    if let Err(e) = ws.close(None).await {
+        eprintln!("Error while closing: {e}")
     }
 
-    Ok(())
+    Ok(response)
 }

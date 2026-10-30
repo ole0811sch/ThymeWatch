@@ -14,7 +14,7 @@ use gtk::{Widget, prelude::*};
 use tokio::runtime::Runtime;
 use tokio::time::sleep;
 
-use crate::websocket::SetAlarmError::TungsteniteError;
+use crate::websocket::RequestError::TungsteniteError;
 use crate::websocket::set_alarm_ws;
 pub mod websocket;
 
