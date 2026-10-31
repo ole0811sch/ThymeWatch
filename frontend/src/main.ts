@@ -19,7 +19,6 @@ app.use(router)
 
 app.mount('#app')
 
-Notification.requestPermission()
 const ctx = Context.background()
 const conn = Connection.getInstance()
 async function trySubscribe() {
