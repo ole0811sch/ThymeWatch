@@ -37,3 +37,17 @@ func (opt *Optional[T]) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	}
 	return nil
 }
+
+func (opt Optional[T]) ToNillable() any {
+	if opt.present {
+		return opt.value
+	}
+	return nil
+}
+
+func (opt Optional[T]) Map[U any](fn func(T) U) Optional[U] {
+	if opt.present {
+		return Some(fn(opt.value))
+	}
+	return Optional[U]{}
+}

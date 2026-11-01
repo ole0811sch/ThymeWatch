@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"log"
@@ -33,6 +34,7 @@ type UserDataContent struct {
 type UserData struct {
 	sharedAlarmSound SharedAlarmSound
 	lb               Lockbox[UserDataContent]
+	db               *sql.DB
 }
 
 type (
@@ -302,7 +304,7 @@ func registerHandlers(ctx context.Context, hub *MyHub) error {
 	return ctx.Err()
 }
 
-func makeUserData() UserData {
+func makeUserData(db *sql.DB) UserData {
 	return UserData{
 		sharedAlarmSound: MakeShareAlarmSound(ALARM_PATH),
 		lb: MakeLockbox(
@@ -312,6 +314,7 @@ func makeUserData() UserData {
 				pausedAlarms: make(map[float64]bool),
 			},
 		),
+		db: db,
 	}
 }
 
@@ -366,6 +369,30 @@ func SendAlarmContinuedToClient(ctx context.Context, info *MyClientInfo, id floa
 	return SendAndWaitFor200(ctxlog.WithAlarmId(ctx, id), info, "ALARM_CONTINUED", AlarmContinuedMessage{Id: id, NewExpiryTime: newExpiryTime})
 }
 
+func onAlarmExpired(ud *UserData, id float64) {
+	ctxWithId := ctxlog.WithAlarmId(context.Background(), id)
+	ctx, cancel := context.WithTimeout(ctxWithId, 5*time.Second)
+	err := ud.expireAlarm(ctx, id)
+	cancel()
+	if err == nil {
+		ctxlog.Printf(ctxWithId, "Alarm expired")
+		return
+	}
+	ctxlog.Printf(ctxWithId, "Error while handling expired alarm: %v", err)
+	go func() {
+		ctxNotif, cancelNotif := context.WithTimeout(ctxWithId, 5*time.Second)
+		_, errNotif := Notify(ctxNotif, "Error while handling expired alarm",
+			fmt.Sprintf("Reason: %v", err),
+			func(id uint32) { cancelNotif() }, nil, NotificationOptions{
+				expireTimeout: 0, urgency: 2,
+			})
+		if errNotif == nil {
+			return
+		}
+		ctxlog.Printf(ctxWithId, "Could not notify about error while handling expired alarm: %v\n", errNotif)
+	}()
+}
+
 func (ud *UserData) startAlarm(alarm *StoredAlarm) {
 	ctx := ctxlog.WithAlarmId(context.Background(), alarm.Id)
 	ctx2, cancel2 := context.WithDeadline(ctx, alarm.Spec.ExpiryTime)
@@ -381,27 +408,7 @@ func (ud *UserData) startAlarm(alarm *StoredAlarm) {
 			return
 		}
 		// alarm must have expired, since only the new deadline triggered
-		ctxWithId := ctxlog.WithAlarmId(context.Background(), id)
-		ctx3, cancel3 := context.WithTimeout(ctxWithId, 5*time.Second)
-		err := ud.expireAlarm(ctx3, id)
-		cancel3()
-		if err == nil {
-			ctxlog.Printf(ctxWithId, "Alarm expired")
-			return
-		}
-		ctxlog.Printf(ctxWithId, "Error while handling expired alarm: %v", err)
-		go func() {
-			ctxNotif, cancelNotif := context.WithTimeout(ctxWithId, 5*time.Second)
-			_, errNotif := Notify(ctxNotif, "Error while handling expired alarm",
-				fmt.Sprintf("Reason: %v", err),
-				func(id uint32) { cancelNotif() }, nil, NotificationOptions{
-					expireTimeout: 0, urgency: 2,
-				})
-			if errNotif == nil {
-				return
-			}
-			ctxlog.Printf(ctxWithId, "Could not notify about error while handling expired alarm: %v\n", errNotif)
-		}()
+		onAlarmExpired(ud, id)
 	}()
 }
 
@@ -433,7 +440,7 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (flo
 			}
 		}()
 	}
-	return ud.lb.WriteReturning(ctx, func(value *UserDataContent) float64 {
+	id, err1, err2 := ud.lb.WriteReturning2(ctx, func(value *UserDataContent) (float64, error) {
 		newStoredAlarm := &StoredAlarm{
 			Spec:               *spec,
 			Id:                 value.alarmId,
@@ -441,6 +448,10 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (flo
 			PausedAtTime:       Optional[time.Time]{},
 			IsExpired:          false,
 			IsDismissed:        false,
+		}
+		err := insertAlarm(ctx, ud.db, newStoredAlarm)
+		if err != nil {
+			return 0, err
 		}
 		value.alarms[value.alarmId] = newStoredAlarm
 		value.alarmId++
@@ -463,8 +474,12 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (flo
 			})
 		}
 		wg.Wait()
-		return newStoredAlarm.Id
+		return newStoredAlarm.Id, nil
 	})
+	if err2 != nil {
+		return 0, err2
+	}
+	return id, err1
 }
 
 func (ud *UserData) registerSubscriber(ctx context.Context, client *MyClientInfo) error {
@@ -506,11 +521,17 @@ func (ud *UserData) unregisterSubscriber(ctx context.Context, client *MyClientIn
 	})
 }
 
+// May be called for alarms that are already expired if they were retrieved
+// from the DB
 func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) error {
-	exists, alarmName, err := ud.lb.WriteReturning2(ctx, func(value *UserDataContent) (bool, Optional[string]) {
+	alarmName, err1, err2 := ud.lb.WriteReturning2(ctx, func(value *UserDataContent) (Optional[string], error) {
 		alarm, exists := value.alarms[alarmId]
 		if !exists {
-			return false, Optional[string]{}
+			return Optional[string]{}, fmt.Errorf("No alarm with this Id")
+		}
+		err := updateAlarms(ctx, ud.db, []float64{alarm.Id}, UpdateSpec{"is_expired", true})
+		if err != nil {
+			return Optional[string]{}, err
 		}
 		alarm.IsExpired = true
 		value.expiredAlarms = append(value.expiredAlarms, alarmId)
@@ -531,13 +552,13 @@ func (ud *UserData) expireAlarm(ctx context.Context, alarmId float64) error {
 			})
 		}
 		wg.Wait()
-		return true, alarm.Spec.Name
+		return alarm.Spec.Name, nil
 	})
-	if err != nil {
-		return err
+	if err2 != nil {
+		return err2
 	}
-	if !exists {
-		return nil
+	if err1 != nil {
+		return err1
 	}
 	close := make(chan Void, 1)
 	go ud.notifyExpiredAlarm(close, alarmId, alarmName)
@@ -588,7 +609,7 @@ func (ud *UserData) notifyExpiredAlarm(close chan Void, alarmId float64, alarmNa
 
 // If ids is empty, dismisses all expired alarms
 func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) error {
-	return ud.lb.Write(ctx, func(value *UserDataContent) {
+	err1, err2 := ud.lb.WriteReturning(ctx, func(value *UserDataContent) error {
 		if len(ids) == 0 {
 			ids = value.expiredAlarms
 		}
@@ -599,6 +620,13 @@ func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) error {
 				ids = ids[:len(ids)-1]
 				continue
 			}
+		}
+		err := updateAlarms(ctx, ud.db, ids, UpdateSpec{"is_dismissed", 1})
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			alarm := value.alarms[id]
 			alarm.IsDismissed = true
 			if alarm.closeNotification != nil {
 				alarm.closeNotification()
@@ -623,26 +651,35 @@ func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) error {
 			})
 		}
 		wg.Wait()
-		err := ud.sharedAlarmSound.Stop(ctx)
+		err = ud.sharedAlarmSound.Stop(ctx)
 		if err != nil {
 			ctxlog.Printf(ctx, "Could not stop alarm sound: %v\n", err)
 		}
+		return nil
 	})
+	if err2 != nil {
+		return err2
+	}
+	return err1
 }
 
 func (ud *UserData) pauseAlarm(ctx context.Context, pauseId float64) error {
-	return ud.lb.Write(ctx, func(udc *UserDataContent) {
+	err, err2 := ud.lb.WriteReturning(ctx, func(udc *UserDataContent) error {
 		_, isPausedAlready := udc.pausedAlarms[pauseId]
 		if isPausedAlready {
-			return
+			return nil
 		}
 		udc.pausedAlarms[pauseId] = true
 		storedAlarm := udc.alarms[pauseId]
 		if storedAlarm == nil {
 			delete(udc.pausedAlarms, pauseId)
-			return
+			return nil
 		}
 		pausedAtTime := time.Now()
+		err := updateAlarms(ctx, ud.db, []float64{pauseId}, UpdateSpec{"paused_at_time", serializeTimeForDb(pausedAtTime)})
+		if err != nil {
+			return err
+		}
 		storedAlarm.PausedAtTime = Some(pausedAtTime)
 		ud.stopAlarm(storedAlarm)
 		wg := sync.WaitGroup{}
@@ -662,27 +699,40 @@ func (ud *UserData) pauseAlarm(ctx context.Context, pauseId float64) error {
 			})
 		}
 		wg.Wait()
+		return nil
 	})
+	if err2 != nil {
+		return err2
+	}
+	return err
 }
 
 func (ud *UserData) continueAlarm(ctx context.Context, continueId float64) error {
-	return ud.lb.Write(ctx, func(udc *UserDataContent) {
+	err, err2 := ud.lb.WriteReturning(ctx, func(udc *UserDataContent) error {
 		_, wasPaused := udc.pausedAlarms[continueId]
 		if !wasPaused {
-			return
+			return nil
 		}
-		delete(udc.pausedAlarms, continueId)
 		storedAlarm := udc.alarms[continueId]
 		if storedAlarm == nil {
-			return
+			return nil
 		}
 		if !storedAlarm.PausedAtTime.present {
 			// inconsistent view
-			return
+			return nil
 		}
 		pausedDuration := time.Since(storedAlarm.PausedAtTime.value)
-		storedAlarm.PausedAtTime.present = false
 		newExpiryTime := storedAlarm.Spec.ExpiryTime.Add(pausedDuration)
+		err := updateAlarms(ctx, ud.db, []float64{continueId},
+			UpdateSpec{"paused_at_time", nil}, UpdateSpec{
+				"expiry_time",
+				serializeTimeForDb(newExpiryTime),
+			})
+		if err != nil {
+			return err
+		}
+		delete(udc.pausedAlarms, continueId)
+		storedAlarm.PausedAtTime.present = false
 		storedAlarm.Spec.ExpiryTime = newExpiryTime
 		ud.startAlarm(storedAlarm)
 		wg := sync.WaitGroup{}
@@ -702,21 +752,30 @@ func (ud *UserData) continueAlarm(ctx context.Context, continueId float64) error
 			})
 		}
 		wg.Wait()
+		return nil
 	})
+	if err2 != nil {
+		return err2
+	}
+	return err
 }
 
 func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) error {
-	return ud.lb.Write(ctx, func(udc *UserDataContent) {
+	err, err2 := ud.lb.WriteReturning(ctx, func(udc *UserDataContent) error {
 		alarm, ok := udc.alarms[cancelId]
 		if !ok {
-			return
+			return nil
+		}
+		err := deleteAlarm(ctx, ud.db, cancelId)
+		if err != nil {
+			return err
 		}
 		delete(udc.alarms, cancelId)
 		if alarm.closeNotification != nil {
 			alarm.closeNotification()
 			alarm.closeNotification = nil
 		}
-		err := ud.sharedAlarmSound.Stop(ctx)
+		err = ud.sharedAlarmSound.Stop(ctx)
 		if err != nil {
 			ctxlog.Printf(ctx, "Could not stop alarm sound: %v\n", err)
 		}
@@ -737,7 +796,12 @@ func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) error {
 			})
 		}
 		wg.Wait()
+		return nil
 	})
+	if err2 != nil {
+		return err2
+	}
+	return err
 }
 
 func main() {
@@ -747,9 +811,46 @@ func main() {
 	)
 	defer stop()
 
-	hub := newHub(makeUserData())
+	db, err := sql.Open("sqlite3", "/tmp/thymewatch.db")
+	if err != nil {
+		ctxlog.Printf(ctx, "Could not open database: %v", err)
+		return
+	}
+	dbCtx, getAlarmsCancel := context.WithTimeout(ctx, 10*time.Second)
+	err = createDb(dbCtx, db)
+	if err != nil {
+		ctxlog.Printf(ctx, "Could not initialize DB: %v", err)
+		return
+	}
+	alarms, err := getAlarms(dbCtx, db)
+	getAlarmsCancel()
+	if err != nil {
+		ctxlog.Printf(ctx, "Could not load alarms: %v", err)
+		return
+	}
+	hub := newHub(makeUserData(db))
+	err = hub.UserData.lb.Write(ctx, func(value *UserDataContent) {
+		value.alarms = alarms
+		for _, alarm := range alarms {
+			if alarm.Id >= value.alarmId {
+				value.alarmId = alarm.Id + 1
+			}
+			if alarm.PausedAtTime.present {
+				value.pausedAlarms[alarm.Id] = true
+			}
+			if alarm.IsExpired && !alarm.IsDismissed {
+				go onAlarmExpired(&hub.UserData, alarm.Id)
+			} else if !alarm.PausedAtTime.present {
+				hub.UserData.startAlarm(alarm)
+			}
+		}
+	})
+	if err != nil {
+		ctxlog.Printf(ctx, "Could not load alarms: %v", err)
+		return
+	}
 	ctx2, cancel2 := context.WithTimeout(ctx, time.Second)
-	err := hub.lb.Write(ctx2, func(value *HubContent[UserData]) {
+	err = hub.lb.Write(ctx2, func(value *HubContent[UserData]) {
 		value.ThreadTimeout = time.Second * 5
 		value.On.Unregistered = func(e UnregisterItem[UserData]) {
 			unregCtx, unregCancel := context.WithTimeout(context.Background(), time.Second*60)
