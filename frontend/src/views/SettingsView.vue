@@ -1,10 +1,28 @@
 <script lang="ts" setup>
+import { Connection } from '@/connection';
+import { Abort, Context } from '@/context';
 import { paths } from '@/router/index.ts'
 
-console.log("Settings")
+const kill = async () => {
+  const err = await Connection.getInstance().kill(Context.background<never>())
+  if (err instanceof Error) {
+    alert(err.message)
+  } else if (err instanceof Abort) {
+    alert("Could not stop server: timeout")
+  }
+}
 </script>
 
 <template>
   <h1>Settings</h1>
-  <RouterLink :to="paths.home">Home</RouterLink>
+  <div class="settings-list">
+    <RouterLink :to="paths.home" style="display: block flow">Home</RouterLink>
+    <button @click="kill" style="width: fit-content">Stop server</button>
+  </div>
 </template>
+
+<style lang="css" scoped>
+.settings-list > * {
+  margin-top: 0.5em;
+}
+</style>

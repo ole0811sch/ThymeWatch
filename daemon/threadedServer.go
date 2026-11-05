@@ -31,6 +31,7 @@ type HubContent[T any] struct {
 type Hub[T any] struct {
 	lb       Lockbox[HubContent[T]]
 	UserData T
+	closed   chan Void
 }
 
 type UnregisterItem[T any] struct {
@@ -112,6 +113,7 @@ func newHub[T any](userData T) *Hub[T] {
 			},
 		),
 		UserData: userData,
+		closed:   make(chan Void, 1),
 	}
 }
 
@@ -214,6 +216,10 @@ func (h *Hub[T]) Close(ctx context.Context) error {
 		}
 		value.isClosed = true
 		ctxlog.Printf(ctx, "Close hub")
+		select {
+		case h.closed <- VVoid:
+		default:
+		}
 		for c := range value.clients {
 			c.conn.CloseNow()
 		}
@@ -223,6 +229,10 @@ func (h *Hub[T]) Close(ctx context.Context) error {
 		return err2
 	}
 	return err1
+}
+
+func (h *Hub[T]) Closed() <-chan Void {
+	return h.closed
 }
 
 func (h *Hub[T]) ThreadTimeout(ctx context.Context) (time.Duration, error) {

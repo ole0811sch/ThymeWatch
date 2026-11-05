@@ -14,6 +14,7 @@ export const tags = [
   'ALARM_CONTINUED',
   'ALARM_EXPIRED',
   'ALARMS_DISMISSED',
+  'KILL',
 ] as const
 export type Tag = (typeof tags)[number]
 export type MessageBody = {
@@ -414,6 +415,15 @@ export class Connection {
     ctx: Context<T>,
   ): Promise<Error | [MessageHeader, MessageBody] | Abort<T | 'timeout'>> {
     return await this.asyncSendMessageDefaultTimeout(ctx, 'SUBSCRIBE', {})
+  }
+
+  async kill<T>(ctx: Context<T>): Promise<undefined | Error | Abort<T | 'timeout'>> {
+    const ctx2 = this.makeMessageContext(ctx)
+    const ret = await this.sendMessage(ctx2, 'KILL', {})
+    if (ret instanceof Error || ret instanceof Abort) {
+      return ret
+    }
+    return undefined
   }
 
   addEventListener<T extends ConnectionEventType>(

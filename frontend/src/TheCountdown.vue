@@ -3,6 +3,7 @@ import { onUnmounted, ref, useTemplateRef } from 'vue'
 import { countdownEventTarget, type Countdown } from './countdowns'
 import { Connection } from './connection'
 import { Abort, Context } from './context'
+import { addEventListenerWithLifetime } from './componentLifetimeEventListener'
 const { countdown, detailsName } = defineProps<{ countdown: Countdown; detailsName: string }>()
 
 const displayText = ref('')
@@ -25,8 +26,12 @@ function update() {
   displayText.value = `${hoursText}${String(minutesField).padStart(2, '0')}:${String(secondsField).padStart(2, '0')}`
 }
 
-const onExpired = (_cd: Countdown) => void update()
-countdownEventTarget.addEventListener('expired', onExpired, { countdownId: countdown.id })
+addEventListenerWithLifetime(
+  onUnmounted,
+  countdownEventTarget,
+  'expired',
+  (_cd: Countdown) => void update(),
+)
 
 const removing = ref(false)
 const togglingPause = ref(false)
@@ -88,7 +93,6 @@ update()
 
 onUnmounted(() => {
   ctx.abort()
-  countdownEventTarget.removeEventListener('expired', onExpired, { countdownId: countdown.id })
   for (const [type, handler] of handlers) {
     removeEventListener(type, handler)
   }
@@ -99,7 +103,12 @@ defineExpose({ update })
 
 <template>
   <div style="display: flex; align-items: center" class="main">
-    <div :class="[...(countdown.isExpired ? ['expired'] : countdown.pausedAtTime ? ['paused'] : []), 'timer']">
+    <div
+      :class="[
+        ...(countdown.isExpired ? ['expired'] : countdown.pausedAtTime ? ['paused'] : []),
+        'timer',
+      ]"
+    >
       {{ displayText }}
     </div>
     <button @click="onRequestRemove" :disabled="removing">Remove</button>
@@ -122,7 +131,9 @@ defineExpose({ update })
         >
           <div v-if="countdown.name">Name: {{ countdown.name }}</div>
           <div>Started at {{ countdown.startedAt.toLocaleTimeString() }}</div>
-          <div v-if="!countdown.pausedAtTime">Expiry at {{ countdown.expiryTimestamp.toLocaleTimeString() }}</div>
+          <div v-if="!countdown.pausedAtTime">
+            Expiry at {{ countdown.expiryTimestamp.toLocaleTimeString() }}
+          </div>
           <div
             v-if="
               countdown.pausedAtTime ||

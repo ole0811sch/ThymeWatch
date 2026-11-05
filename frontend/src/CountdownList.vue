@@ -2,13 +2,13 @@
 import { onBeforeUnmount, ref, watchSyncEffect, type Ref } from 'vue'
 import TheCountdown from './TheCountdown.vue'
 import { countdownEventTarget, countdowns, type Countdown } from './countdowns.ts'
+import { addEventListenerWithLifetime } from './componentLifetimeEventListener.ts'
 
 const emit = defineEmits<{ expired: [Countdown] }>()
 /** only contains ids of countdowns in {@link countdownEls} */
 const countdownInactive = ref<Set<number>>(new Set())
 const countdownEls = ref<Map<number, InstanceType<typeof TheCountdown>>>(new Map())
 
-const visibilityChangeListenerAc = new AbortController()
 const isUnmounted = ref(false)
 const documentVisibility = ref(true)
 
@@ -23,15 +23,9 @@ function clock() {
   clockCallbackId = setTimeout(clock, nextSecond - now)
 }
 
-addEventListener(
-  'visibilitychange',
-  () => {
-    documentVisibility.value = document.visibilityState !== 'hidden'
-  },
-  {
-    signal: visibilityChangeListenerAc.signal,
-  },
-)
+addEventListenerWithLifetime(onBeforeUnmount, window, 'visibilitychange', () => {
+  documentVisibility.value = document.visibilityState !== 'hidden'
+})
 
 watchSyncEffect(() => {
   const clockShouldRun =
@@ -50,34 +44,40 @@ watchSyncEffect(() => {
   }
 })
 
-const onCountdownRemoved = (cd: Countdown) => {
+addEventListenerWithLifetime(onBeforeUnmount, countdownEventTarget, 'removed', (cd: Countdown) => {
   countdownInactive.value.delete(cd.id)
-}
-countdownEventTarget.addEventListener('removed', onCountdownRemoved)
-const onCountdownExpired = async (countdown: Countdown) => {
-  countdownInactive.value.add(countdown.id)
-  countdownEls.value.get(countdown.id)?.update()
-  emit('expired', countdown)
-}
-countdownEventTarget.addEventListener('expired', onCountdownExpired)
-const onCountdownPaused = async (countdown: Countdown) => {
-  countdownInactive.value.add(countdown.id)
-  countdownEls.value.get(countdown.id)?.update()
-}
-countdownEventTarget.addEventListener('paused', onCountdownPaused)
-const onCountdownContinued = async (countdown: Countdown) => {
-  countdownInactive.value.delete(countdown.id)
-  countdownEls.value.get(countdown.id)?.update()
-}
-countdownEventTarget.addEventListener('continued', onCountdownContinued)
+})
+addEventListenerWithLifetime(
+  onBeforeUnmount,
+  countdownEventTarget,
+  'expired',
+  async (countdown: Countdown) => {
+    countdownInactive.value.add(countdown.id)
+    countdownEls.value.get(countdown.id)?.update()
+    emit('expired', countdown)
+  },
+)
+addEventListenerWithLifetime(
+  onBeforeUnmount,
+  countdownEventTarget,
+  'paused',
+  async (countdown: Countdown) => {
+    countdownInactive.value.add(countdown.id)
+    countdownEls.value.get(countdown.id)?.update()
+  },
+)
+addEventListenerWithLifetime(
+  onBeforeUnmount,
+  countdownEventTarget,
+  'continued',
+  async (countdown: Countdown) => {
+    countdownInactive.value.delete(countdown.id)
+    countdownEls.value.get(countdown.id)?.update()
+  },
+)
 
 onBeforeUnmount(() => {
   isUnmounted.value = true
-  visibilityChangeListenerAc.abort()
-  countdownEventTarget.removeEventListener('removed', onCountdownRemoved)
-  countdownEventTarget.removeEventListener('expired', onCountdownExpired)
-  countdownEventTarget.addEventListener('continued', onCountdownContinued)
-  countdownEventTarget.addEventListener('paused', onCountdownPaused)
 })
 </script>
 

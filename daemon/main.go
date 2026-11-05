@@ -95,6 +95,14 @@ func ParseCreateAlarmMessage(bytes []byte) (CreateAlarmMessage, error) {
 	return message, err
 }
 
+type KillMessage struct{}
+
+func ParseKillMessage(bytes []byte) (KillMessage, error) {
+	var message KillMessage
+	err := json.Unmarshal(bytes, &message)
+	return message, err
+}
+
 type SubscribeMessage struct{}
 
 func ParseSubscribeMessage(bytes []byte) (SubscribeMessage, error) {
@@ -211,6 +219,16 @@ var HandleCreateAlarm = func(hd *MyHandlerData, ctx context.Context, req []byte,
 	return nil
 }
 
+var HandleKill = func(hd *MyHandlerData, ctx context.Context, req []byte, responder Responder) error {
+	_, err := ParseKillMessage(req)
+	if err != nil {
+		return ProtocolErrorFromErr(err)
+	}
+	ctxlog.Printf(ctx, "Closing hub due to client request")
+	err = hd.hub.Close(ctx)
+	return err
+}
+
 var HandleSubscribe = func(hd *MyHandlerData, ctx context.Context, req []byte, responder Responder) error {
 	_, err := ParseSubscribeMessage(req)
 	if err != nil {
@@ -301,6 +319,7 @@ func registerHandlers(ctx context.Context, hub *MyHub) error {
 	hub.RegisterHandler(ctx, "DISMISS_ALARMS", HandleDismissAlarms)
 	hub.RegisterHandler(ctx, "PAUSE_ALARM", HandlePauseAlarm)
 	hub.RegisterHandler(ctx, "CONTINUE_ALARM", HandleContinueAlarm)
+	hub.RegisterHandler(ctx, "KILL", HandleKill)
 	return ctx.Err()
 }
 
@@ -890,11 +909,14 @@ func main() {
 		}
 	}()
 
-	<-ctx.Done()
-	hubCloseCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-	hub.Close(hubCloseCtx)
-	cancel()
-	ctxlog.Printf(ctx, "shutting down, draining connections...")
+	select {
+	case <-ctx.Done():
+		hubCloseCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		hub.Close(hubCloseCtx)
+		cancel()
+	case <-hub.Closed():
+		stop()
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(
 		context.Background(), 10*time.Second,
