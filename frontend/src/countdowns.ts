@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 
 export interface Countdown {
   startedAt: Date
@@ -11,23 +11,12 @@ export interface Countdown {
   isDismissed: boolean
 }
 
-const countdowns: Map<number, Countdown> = new Map()
+export const countdowns: Ref<Map<number, Countdown>> = ref(new Map())
 export const expiredUndismissedAlarms = ref(new Set<number>())
-
-/**
- * @returns copy of countdowns map
- */
-export function getCountdowns(): Map<number, Countdown> {
-  return new Map(countdowns)
-}
-
-export function getCountdown(id: number): Readonly<Countdown> | undefined {
-  return countdowns.get(id)
-}
 
 export function addCountdown(cd: Countdown): Countdown {
   const cdFull: Countdown = { ...cd }
-  countdowns.set(cdFull.id, cdFull)
+  countdowns.value.set(cdFull.id, cdFull)
   handler('new', cdFull)
   if (cdFull.isExpired && !cdFull.isDismissed) {
     expiredUndismissedAlarms.value.add(cd.id)
@@ -43,12 +32,12 @@ export function addCountdown(cd: Countdown): Countdown {
 
 export function removeCountdown(id: number): void {
   dismissCountdown(id)
-  const cd = countdowns.get(id)
+  const cd = countdowns.value.get(id)
   if (!cd) {
     return
   }
 
-  countdowns.delete(id)
+  countdowns.value.delete(id)
   handler('removed', cd)
   for (const type of countdownEventTypes) {
     handlers[type].delete(id)
@@ -56,8 +45,8 @@ export function removeCountdown(id: number): void {
 }
 
 export function removeAllCountdown(): void {
-  const cpy = new Map(countdowns)
-  countdowns.clear()
+  const cpy = new Map(countdowns.value)
+  countdowns.value.clear()
   for (const cd of cpy.values()) {
     handler('removed', cd)
   }
@@ -71,7 +60,7 @@ export function removeAllCountdown(): void {
 }
 
 export function pauseCountdown(id: number, pausedAtTime: Date): void {
-  const cd = countdowns.get(id)
+  const cd = countdowns.value.get(id)
   if (!cd || cd.isExpired) {
     return
   }
@@ -81,7 +70,7 @@ export function pauseCountdown(id: number, pausedAtTime: Date): void {
 }
 
 export function continueCountdown(id: number, newExpiryTime: Date): void {
-  const cd = countdowns.get(id)
+  const cd = countdowns.value.get(id)
   if (!cd || cd.isExpired) {
     return
   }
@@ -92,7 +81,7 @@ export function continueCountdown(id: number, newExpiryTime: Date): void {
 }
 
 export function expireCountdown(id: number): void {
-  const cd = countdowns.get(id)
+  const cd = countdowns.value.get(id)
   if (!cd || cd.isExpired) {
     return
   }
@@ -105,7 +94,7 @@ export function expireCountdown(id: number): void {
 }
 
 export function dismissCountdown(id: number): void {
-  const cd = countdowns.get(id)
+  const cd = countdowns.value.get(id)
   if (!cd || cd.isDismissed || !cd.isExpired) {
     return
   }

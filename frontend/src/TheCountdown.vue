@@ -6,8 +6,6 @@ import { Abort, Context } from './context'
 const { countdown, detailsName } = defineProps<{ countdown: Countdown; detailsName: string }>()
 
 const displayText = ref('')
-const isPaused = ref(countdown.pausedAtTime !== null)
-const isExpired = ref(countdown.isExpired)
 const details = useTemplateRef('details')
 const ctx = Context.background()
 
@@ -27,19 +25,8 @@ function update() {
   displayText.value = `${hoursText}${String(minutesField).padStart(2, '0')}:${String(secondsField).padStart(2, '0')}`
 }
 
-const onExpired = (_cd: Countdown) => {
-  isExpired.value = true
-  update()
-}
+const onExpired = (_cd: Countdown) => void update()
 countdownEventTarget.addEventListener('expired', onExpired, { countdownId: countdown.id })
-const onPaused = () => {
-  isPaused.value = true
-}
-countdownEventTarget.addEventListener('paused', onPaused, { countdownId: countdown.id })
-const onContinued = () => {
-  isPaused.value = false
-}
-countdownEventTarget.addEventListener('continued', onContinued, { countdownId: countdown.id })
 
 const removing = ref(false)
 const togglingPause = ref(false)
@@ -61,7 +48,7 @@ const onRequestTogglePause = async () => {
   try {
     const ctx2 = Context.withTimeout(5000, ctx)
     const conn = Connection.getInstance()
-    if (isPaused.value) {
+    if (countdown.pausedAtTime) {
       conn.continueAlarm(ctx2, countdown.id)
     } else {
       conn.pauseAlarm(ctx2, countdown.id)
@@ -102,8 +89,6 @@ update()
 onUnmounted(() => {
   ctx.abort()
   countdownEventTarget.removeEventListener('expired', onExpired, { countdownId: countdown.id })
-  countdownEventTarget.removeEventListener('paused', onPaused, { countdownId: countdown.id })
-  countdownEventTarget.removeEventListener('continued', onContinued, { countdownId: countdown.id })
   for (const [type, handler] of handlers) {
     removeEventListener(type, handler)
   }
@@ -114,12 +99,12 @@ defineExpose({ update })
 
 <template>
   <div style="display: flex; align-items: center" class="main">
-    <div :class="[...(isExpired ? ['expired'] : isPaused ? ['paused'] : []), 'timer']">
+    <div :class="[...(countdown.isExpired ? ['expired'] : countdown.pausedAtTime ? ['paused'] : []), 'timer']">
       {{ displayText }}
     </div>
     <button @click="onRequestRemove" :disabled="removing">Remove</button>
-    <button @click="onRequestTogglePause" v-if="!isExpired">
-      {{ isPaused ? 'Continue' : 'Pause' }}
+    <button @click="onRequestTogglePause" v-if="!countdown.isExpired">
+      {{ countdown.pausedAtTime ? 'Continue' : 'Pause' }}
     </button>
     <details style="display: inline" ref="details" :name="detailsName" @toggle="onDetailsToggle">
       <summary style="cursor: pointer"><span style="user-select: none">Show details</span></summary>
@@ -137,10 +122,10 @@ defineExpose({ update })
         >
           <div v-if="countdown.name">Name: {{ countdown.name }}</div>
           <div>Started at {{ countdown.startedAt.toLocaleTimeString() }}</div>
-          <div v-if="!isPaused">Expiry at {{ countdown.expiryTimestamp.toLocaleTimeString() }}</div>
+          <div v-if="!countdown.pausedAtTime">Expiry at {{ countdown.expiryTimestamp.toLocaleTimeString() }}</div>
           <div
             v-if="
-              isPaused ||
+              countdown.pausedAtTime ||
               countdown.originalExpiryTimestamp.getTime() !== countdown.expiryTimestamp.getTime()
             "
           >

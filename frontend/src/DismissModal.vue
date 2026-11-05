@@ -2,14 +2,14 @@
 import { computed, onBeforeMount, onMounted, onUnmounted, useTemplateRef } from 'vue'
 import { Connection as Connection2 } from './connection'
 import { Context } from './context'
-import { expiredUndismissedAlarms, getCountdown } from './countdowns'
+import { countdowns, expiredUndismissedAlarms } from './countdowns'
 
 const Connection = Connection2
 const dialog = useTemplateRef('dialog')
 const ctx = Context.background()
 const expiredUndismissedAlarmObjs = computed(() =>
   [...expiredUndismissedAlarms.value.values()]
-    .map((id) => getCountdown(id))
+    .map((id) => countdowns.value.get(id))
     .filter((cd) => cd !== undefined)
     .sort((a, b) =>
       a.expiryTimestamp.getTime() < b.expiryTimestamp.getTime()

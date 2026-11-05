@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watchSyncEffect, type Ref } from 'vue'
 import TheCountdown from './TheCountdown.vue'
-import { countdownEventTarget, getCountdowns, type Countdown } from './countdowns.ts'
+import { countdownEventTarget, countdowns, type Countdown } from './countdowns.ts'
 
-const countdowns: Ref<Map<number, Countdown>> = ref(getCountdowns())
 const emit = defineEmits<{ expired: [Countdown] }>()
 /** only contains ids of countdowns in {@link countdownEls} */
 const countdownInactive = ref<Set<number>>(new Set())
@@ -53,13 +52,8 @@ watchSyncEffect(() => {
 
 const onCountdownRemoved = (cd: Countdown) => {
   countdownInactive.value.delete(cd.id)
-  countdowns.value.delete(cd.id)
 }
 countdownEventTarget.addEventListener('removed', onCountdownRemoved)
-const onNewCountdown = (cd: Countdown) => {
-  countdowns.value.set(cd.id, cd)
-}
-countdownEventTarget.addEventListener('new', onNewCountdown)
 const onCountdownExpired = async (countdown: Countdown) => {
   countdownInactive.value.add(countdown.id)
   countdownEls.value.get(countdown.id)?.update()
@@ -81,7 +75,6 @@ onBeforeUnmount(() => {
   isUnmounted.value = true
   visibilityChangeListenerAc.abort()
   countdownEventTarget.removeEventListener('removed', onCountdownRemoved)
-  countdownEventTarget.removeEventListener('new', onNewCountdown)
   countdownEventTarget.removeEventListener('expired', onCountdownExpired)
   countdownEventTarget.addEventListener('continued', onCountdownContinued)
   countdownEventTarget.addEventListener('paused', onCountdownPaused)
