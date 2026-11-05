@@ -838,10 +838,14 @@ func main() {
 			if alarm.PausedAtTime.present {
 				value.pausedAlarms[alarm.Id] = true
 			}
-			if alarm.IsExpired && !alarm.IsDismissed {
-				go onAlarmExpired(&hub.UserData, alarm.Id)
-			} else if !alarm.PausedAtTime.present {
-				hub.UserData.startAlarm(alarm)
+			if alarm.IsExpired {
+				if !alarm.IsDismissed {
+					go onAlarmExpired(&hub.UserData, alarm.Id)
+				}
+			} else {
+				if !alarm.PausedAtTime.present {
+					hub.UserData.startAlarm(alarm)
+				}
 			}
 		}
 	})
