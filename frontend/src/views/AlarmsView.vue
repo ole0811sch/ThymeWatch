@@ -13,7 +13,7 @@ const listRef = useTemplateRef('list')
 const inputRef = useTemplateRef('input')
 const dateInputAsDate: Ref<Date | undefined> = ref(undefined)
 const submitting: Ref<boolean> = ref(false)
-const ctx = Context.background()
+const ctx = Context.withCancel<"unmounted">()
 const isConnected: Ref<'uninitialized' | Connection['state']> = ref('uninitialized')
 const connection = Connection.getInstance()
 // prevent from toggling back to false too quickly
@@ -79,7 +79,7 @@ const onClickRetry = () => {
 }
 
 onUnmounted(() => {
-  ctx.abort()
+  ctx.abort("unmounted")
   removeEventListener('focus', onWindowFocus)
 })
 </script>

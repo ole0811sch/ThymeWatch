@@ -6,7 +6,7 @@ import { countdowns, expiredUndismissedAlarms } from './countdowns'
 
 const Connection = Connection2
 const dialog = useTemplateRef('dialog')
-const ctx = Context.background()
+const ctx = Context.withCancel<"unmounted">()
 const expiredUndismissedAlarmObjs = computed(() =>
   [...expiredUndismissedAlarms.value.values()]
     .map((id) => countdowns.value.get(id))
@@ -28,7 +28,7 @@ onMounted(() => {
   dialog.value?.showModal()
 })
 onUnmounted(() => {
-  ctx.abort()
+  ctx.abort("unmounted")
 })
 </script>
 

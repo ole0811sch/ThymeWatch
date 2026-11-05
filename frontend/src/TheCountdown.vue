@@ -8,7 +8,7 @@ const { countdown, detailsName } = defineProps<{ countdown: Countdown; detailsNa
 
 const displayText = ref('')
 const details = useTemplateRef('details')
-const ctx = Context.background()
+const ctx = Context.withCancel<"unmounted">()
 
 function update() {
   if (!countdown.expiryTimestamp) {
@@ -92,7 +92,7 @@ const onDetailsToggle = (e: ToggleEvent) => {
 update()
 
 onUnmounted(() => {
-  ctx.abort()
+  ctx.abort("unmounted")
   for (const [type, handler] of handlers) {
     removeEventListener(type, handler)
   }

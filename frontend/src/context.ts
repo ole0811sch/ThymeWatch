@@ -19,22 +19,23 @@ export function withTimeout<T>(p: Promise<T>, millis: number): Promise<T | Timeo
 }
 
 export type TimeoutContext = Context<'timeout'>
+export type WOU<T> = Exclude<T, undefined>
 
-export class Context<T = undefined> {
+export class Context<T = true> {
   private abortController: Omit<AbortController, 'abort'> & {
-    abort: (this: AbortController, reason: T) => void
+    abort: (this: AbortController, reason: WOU<T>) => void
   }
   private clearId?: number
   private isCanceled = false
   /**
    * Resolves with the abort reason
    */
-  readonly reason: Promise<Abort<T>>
+  readonly reason: Promise<Abort<WOU<T>>>
   private constructor() {
     this.abortController = new AbortController()
     this.reason = new Promise((res) =>
       this.abortController.signal.addEventListener('abort', function (ev) {
-        res(new Abort(this.reason as T))
+        res(new Abort(this.reason as WOU<T>))
       }),
     )
   }
@@ -43,13 +44,16 @@ export class Context<T = undefined> {
     ctx?.reason.then((r) => ctx2.abort(r.value))
     return ctx2
   }
-  static background<T = undefined>(): Context<T> {
+  static background<T = never>(): Context<T> {
+    return new Context()
+  }
+  static withCancel<T = true>(): Context<T> {
     return new Context()
   }
   /**
    * @returns Context that will abort with reason TimeoutError after millis ms.
    */
-  static withTimeout<T = undefined, U = never>(
+  static withTimeout<T = never, U = never>(
     millis: number,
     ctx?: Context<T>,
   ): Context<T | U | 'timeout'> {
@@ -65,7 +69,7 @@ export class Context<T = undefined> {
     }, millis)
     return ctx2
   }
-  on(expectedReason: T, callback: () => void) {
+  on(expectedReason: WOU<T>, callback: () => void) {
     this.reason.then((reason) => {
       if (this.isCanceled) {
         return
@@ -80,18 +84,16 @@ export class Context<T = undefined> {
     this: this extends Context<infer T> ? ('timeout' extends T ? this : never) : never,
     callback: () => void,
   ) {
-    this.on('timeout' as T, callback)
+    this.on('timeout' as WOU<T>, callback)
   }
 
-  abort(
-    this: this extends Context<infer U> ? ([undefined] extends [U] ? this : never) : never,
-  ): void
-  abort(reason: T): void
-  abort(reason?: T) {
+  abort(this: this extends Context<infer U> ? (true extends U ? this : never) : never): void
+  abort(reason: WOU<T>): void
+  abort(reason?: WOU<T>) {
     if (this.isCanceled) {
       return
     }
-    this.abortController.abort(reason!)
+    this.abortController.abort(reason === undefined ? (true as WOU<T>) : reason)
   }
   /**
    * Prevents from being aborted
@@ -105,7 +107,7 @@ export class Context<T = undefined> {
   get signal(): AbortSignal {
     return this.abortController.signal
   }
-  get maybeReason(): T | null {
+  get maybeReason(): WOU<T> | null {
     return this.abortController.signal.reason
   }
 }
