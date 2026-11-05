@@ -640,7 +640,18 @@ func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) error {
 				continue
 			}
 		}
-		err := updateAlarms(ctx, ud.db, ids, UpdateSpec{"is_dismissed", 1})
+
+		err := ud.sharedAlarmSound.Stop(ctx)
+		if err != nil {
+			ctxlog.Printf(ctx, "Could not stop alarm sound: %v\n", err)
+		}
+
+		if len(ids) == 0 {
+			ctxlog.Printf(ctx, "There are no alarms to dismiss")
+			return nil
+		}
+
+		err = updateAlarms(ctx, ud.db, ids, UpdateSpec{"is_dismissed", 1})
 		if err != nil {
 			return err
 		}
@@ -670,10 +681,6 @@ func (ud *UserData) dismissAlarms(ctx context.Context, ids []float64) error {
 			})
 		}
 		wg.Wait()
-		err = ud.sharedAlarmSound.Stop(ctx)
-		if err != nil {
-			ctxlog.Printf(ctx, "Could not stop alarm sound: %v\n", err)
-		}
 		return nil
 	})
 	if err2 != nil {
