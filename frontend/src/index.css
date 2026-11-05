@@ -40,6 +40,10 @@
   border-width: var(--border-width);
 }
 
+.page-container {
+  padding: 1em 2em;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --color-primary: #111;
@@ -106,7 +110,8 @@ input::placeholder {
  * Chrome), we delay the highlighter by 50ms.
  */
 @keyframes delayedFocusIndicator {
-  0% {}
+  0% {
+  }
   100% {
     border-color: rgba(0, 0, 0, 0);
     outline-width: 2px;

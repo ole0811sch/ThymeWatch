@@ -55,7 +55,6 @@ onUnmounted(() => {
 <template>
   <div
     style="
-      padding: 1em 2em;
       width: 100%;
       box-sizing: border-box;
       flex: 1;

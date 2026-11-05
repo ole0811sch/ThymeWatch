@@ -14,7 +14,7 @@ const kill = async () => {
 </script>
 
 <template>
-  <h1>Settings</h1>
+  <h1 style="margin-top: 0; margin-left: auto; margin-right: auto;">Settings</h1>
   <div class="settings-list">
     <RouterLink :to="paths.home" style="display: block flow">Home</RouterLink>
     <button @click="kill" style="width: fit-content">Stop server</button>

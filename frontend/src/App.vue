@@ -71,5 +71,7 @@ onUnmounted(() => {
     <span v-if="hideShowReconnectBtn">Reconnecting...</span>
     <span style="flex: 1"></span>
   </div>
-  <RouterView></RouterView>
+  <div class="page-container">
+    <RouterView></RouterView>
+  </div>
 </template>
