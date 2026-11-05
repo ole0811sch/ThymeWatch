@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, useTemplateRef, type Ref } from 'vue'
+import { onMounted, onUnmounted, ref, useTemplateRef, type Ref } from 'vue'
 import CountdownList from '../CountdownList.vue'
 import DismissModal from '../DismissModal.vue'
 import { Connection } from '../connection.ts'
 import { Context } from '../context.ts'
-import { debounceRef, temporarilyFixRef } from '../debounce.ts'
 import { expiredUndismissedAlarms } from '../countdowns.ts'
-import router, { paths } from '@/router/index.ts'
+import { paths } from '@/router/index.ts'
 
 const nameInputRef = useTemplateRef('name-input')
 const listRef = useTemplateRef('list')
@@ -14,26 +13,7 @@ const inputRef = useTemplateRef('input')
 const dateInputAsDate: Ref<Date | undefined> = ref(undefined)
 const submitting: Ref<boolean> = ref(false)
 const ctx = Context.withCancel<"unmounted">()
-const isConnected: Ref<'uninitialized' | Connection['state']> = ref('uninitialized')
-const connection = Connection.getInstance()
-// prevent from toggling back to false too quickly
-const hideShowReconnectBtn = debounceRef(
-  computed(() => isConnected.value === 'connecting' || isConnected.value === 'open'),
-  300,
-  { doUpdateImmediately: (v) => v },
-)
-const doShowDisconnectedBar = debounceRef(
-  temporarilyFixRef(
-    computed(() => isConnected.value === 'connecting' || isConnected.value === 'closed'),
-    false,
-    2000,
-  ),
-  1000,
-)
 
-isConnected.value = connection.state
-connection.addEventListener('closed', () => (isConnected.value = 'closed'))
-connection.addEventListener('reconnected', () => (isConnected.value = 'open'))
 const onSubmit = async () => {
   if (listRef.value === null || nameInputRef.value === null) {
     return
@@ -67,55 +47,12 @@ onMounted(() => {
   inputRef.value!.value = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
 })
 
-const onWindowFocus = () => {
-  if (Connection.getInstance().state === 'closed') {
-    Connection.getInstance().reconnect()
-  }
-}
-addEventListener('focus', onWindowFocus)
-const onClickRetry = () => {
-  isConnected.value = 'connecting'
-  Connection.getInstance().reconnect()
-}
-
 onUnmounted(() => {
   ctx.abort("unmounted")
-  removeEventListener('focus', onWindowFocus)
 })
 </script>
 
 <template>
-  <div
-    style="
-      display: flex;
-      align-items: center;
-      background-color: var(--color-contrast-intensish);
-      width: 100%;
-      padding: var(--box-padding);
-      box-sizing: border-box;
-    "
-    v-if="doShowDisconnectedBar"
-  >
-    <span style="margin-right: 0.5em"> The connection to the server was lost. </span>
-    <button
-      :style="{
-        display: 'inline',
-        ...(hideShowReconnectBtn && {
-          visibility: 'hidden',
-          width: 0,
-          paddingLeft: 0,
-          paddingRight: 0,
-          marginLeft: 0,
-          marginRight: 0,
-        }),
-      }"
-      @click="onClickRetry"
-    >
-      Reconnect
-    </button>
-    <span v-if="hideShowReconnectBtn">Reconnecting...</span>
-    <span style="flex: 1"></span>
-  </div>
   <div
     style="
       padding: 1em 2em;
