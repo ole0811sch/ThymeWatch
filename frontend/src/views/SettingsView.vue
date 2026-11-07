@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { Connection } from '@/connection';
-import { Abort, Context } from '@/context';
+import { Abort, Context } from '@/utils/context';
 import { paths } from '@/router/index.ts'
 
 const kill = async () => {

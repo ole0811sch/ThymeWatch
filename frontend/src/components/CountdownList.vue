@@ -2,7 +2,7 @@
 import { onBeforeUnmount, ref, watchSyncEffect, type Ref } from 'vue'
 import TheCountdown from '../components/TheCountdown.vue'
 import { countdownEventTarget, countdowns, type Countdown } from '../countdowns.ts'
-import { addEventListenerWithLifetime } from '../componentLifetimeEventListener.ts'
+import { addEventListenerWithLifetime } from '../utils/componentLifetimeEventListener.ts'
 
 const emit = defineEmits<{ expired: [Countdown] }>()
 /** only contains ids of countdowns in {@link countdownEls} */

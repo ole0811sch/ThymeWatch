@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeMount, onMounted, onUnmounted, useTemplateRef } from 'vue'
 import { Connection as Connection2 } from '../connection'
-import { Context } from '../context'
+import { Context } from '../utils/context'
 import { countdowns, expiredUndismissedAlarms } from '../countdowns'
 
 const Connection = Connection2

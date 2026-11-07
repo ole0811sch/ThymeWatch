@@ -3,7 +3,7 @@ import { onMounted, onUnmounted, ref, useTemplateRef, type Ref } from 'vue'
 import CountdownList from '../components/CountdownList.vue'
 import DismissModal from '../components/DismissModal.vue'
 import { Connection } from '../connection.ts'
-import { Context } from '../context.ts'
+import { Context } from '../utils/context.ts'
 import { expiredUndismissedAlarms } from '../countdowns.ts'
 import { paths } from '@/router/index.ts'
 

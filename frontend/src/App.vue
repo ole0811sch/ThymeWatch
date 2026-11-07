@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, type Ref } from 'vue'
 import { Connection } from './connection'
-import { debounceRef, temporarilyFixRef } from './debounce'
+import { debounceRef, temporarilyFixRef } from './utils/debounce'
 
 const isConnected: Ref<'uninitialized' | Connection['state']> = ref('uninitialized')
 const connection = Connection.getInstance()
