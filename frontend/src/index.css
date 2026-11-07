@@ -69,6 +69,7 @@ button {
   border-radius: 50vmin;
   color: var(--color-text);
   user-select: none;
+  cursor: pointer;
 }
 button:hover:not(:active, :disabled) {
   background-color: var(--button-bg-color-hover);
