@@ -12,7 +12,7 @@ const listRef = useTemplateRef('list')
 const inputRef = useTemplateRef('input')
 const dateInputAsDate: Ref<Date | undefined> = ref(undefined)
 const submitting: Ref<boolean> = ref(false)
-const ctx = Context.withCancel<"unmounted">()
+const ctx = Context.withCancel<'unmounted'>()
 
 const onSubmit = async () => {
   if (listRef.value === null || nameInputRef.value === null) {
@@ -48,12 +48,13 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  ctx.abort("unmounted")
+  ctx.abort('unmounted')
 })
 </script>
 
 <template>
   <div
+    class="page-container"
     style="
       width: 100%;
       box-sizing: border-box;

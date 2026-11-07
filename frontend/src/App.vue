@@ -48,6 +48,8 @@ onUnmounted(() => {
       width: 100%;
       padding: var(--box-padding);
       box-sizing: border-box;
+      border-bottom-width: 0.05em;
+      border-bottom-style: solid;
     "
     v-if="doShowDisconnectedBar"
   >
@@ -71,7 +73,5 @@ onUnmounted(() => {
     <span v-if="hideShowReconnectBtn">Reconnecting...</span>
     <span style="flex: 1"></span>
   </div>
-  <div class="page-container">
-    <RouterView></RouterView>
-  </div>
+  <RouterView></RouterView>
 </template>

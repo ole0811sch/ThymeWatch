@@ -2,6 +2,7 @@
 import { Connection } from '@/connection';
 import { Abort, Context } from '@/utils/context';
 import { paths } from '@/router/index.ts'
+import TitleBar from '@/components/TitleBar.vue';
 
 const kill = async () => {
   const err = await Connection.getInstance().kill(Context.background<never>())
@@ -14,9 +15,8 @@ const kill = async () => {
 </script>
 
 <template>
-  <h1 style="margin-top: 0; margin-left: auto; margin-right: auto;">Settings</h1>
-  <div class="settings-list">
-    <RouterLink :to="paths.home" style="display: block flow">Home</RouterLink>
+  <TitleBar title="Settings" back-path="home"></TitleBar>
+  <div class="page-container settings-list">
     <button @click="kill" style="width: fit-content">Stop server</button>
   </div>
 </template>
