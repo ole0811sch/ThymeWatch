@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeMount, onMounted, onUnmounted, useTemplateRef } from 'vue'
-import { Connection as Connection2 } from './connection'
-import { Context } from './context'
-import { countdowns, expiredUndismissedAlarms } from './countdowns'
+import { Connection as Connection2 } from '../connection'
+import { Context } from '../context'
+import { countdowns, expiredUndismissedAlarms } from '../countdowns'
 
 const Connection = Connection2
 const dialog = useTemplateRef('dialog')

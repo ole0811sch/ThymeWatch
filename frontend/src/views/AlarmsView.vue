@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, useTemplateRef, type Ref } from 'vue'
-import CountdownList from '../CountdownList.vue'
-import DismissModal from '../DismissModal.vue'
+import CountdownList from '../components/CountdownList.vue'
+import DismissModal from '../components/DismissModal.vue'
 import { Connection } from '../connection.ts'
 import { Context } from '../context.ts'
 import { expiredUndismissedAlarms } from '../countdowns.ts'

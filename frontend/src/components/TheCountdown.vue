@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onUnmounted, ref, useTemplateRef } from 'vue'
-import { countdownEventTarget, type Countdown } from './countdowns'
-import { Connection } from './connection'
-import { Abort, Context } from './context'
-import { addEventListenerWithLifetime } from './componentLifetimeEventListener'
+import { countdownEventTarget, type Countdown } from '../countdowns'
+import { Connection } from '../connection'
+import { Abort, Context } from '../context'
+import { addEventListenerWithLifetime } from '../componentLifetimeEventListener'
 const { countdown, detailsName } = defineProps<{ countdown: Countdown; detailsName: string }>()
 
 const displayText = ref('')
