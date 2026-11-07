@@ -6,6 +6,8 @@ import { Connection } from '../connection.ts'
 import { Context } from '../utils/context.ts'
 import { expiredUndismissedAlarms } from '../countdowns.ts'
 import { paths } from '@/router/index.ts'
+import RoundSettings from '@iconify-vue/ic/round-settings'
+import IconButton from '@/components/IconButton.vue'
 
 const nameInputRef = useTemplateRef('name-input')
 const listRef = useTemplateRef('list')
@@ -84,7 +86,7 @@ onUnmounted(() => {
         </button>
       </form>
       <div style="flex: 1; display: flex; justify-content: right">
-        <button @click="$router.push(paths.settings)">Settings</button>
+        <IconButton :Icon="RoundSettings" @click="$router.push(paths.settings)" />
       </div>
     </div>
     <div style="flex: 1"></div>

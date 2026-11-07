@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import router, { paths } from '@/router'
-import BackButton from './BackButton.vue';
+import IconButton from './IconButton.vue'
+import RoundArrowBack from '@iconify-vue/ic/round-arrow-back'
 
 const props = defineProps<{
   title: string
@@ -20,7 +21,11 @@ const props = defineProps<{
     "
   >
     <div style="flex: 1; align-items: center; display: grid">
-      <BackButton @click="router.push(paths[props.backPath])"/>
+      <IconButton
+        :Icon="RoundArrowBack"
+        @click="router.push(paths[props.backPath])"
+        style="width: 1.5rem; height: 1.5rem"
+      />
     </div>
     <div style="font-size: var(--font-size-normal); font-weight: bold">
       {{ props.title }}
