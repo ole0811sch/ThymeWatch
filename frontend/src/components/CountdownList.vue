@@ -82,7 +82,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div>
+  <div style="display: flex; flex-wrap: wrap; justify-content: center;">
     <TheCountdown
       :details-name="detailsName"
       :countdown
@@ -94,7 +94,7 @@ onBeforeUnmount(() => {
           else countdownEls.set(id, cd as any)
         }
       "
-      style="margin: 0.5em 0"
+      style="margin: 0.5em 0.2em"
     />
   </div>
 </template>

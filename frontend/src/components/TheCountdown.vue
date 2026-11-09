@@ -4,11 +4,17 @@ import { countdownEventTarget, type Countdown } from '../countdowns'
 import { Connection } from '../connection'
 import { Abort, Context } from '../utils/context'
 import { addEventListenerWithLifetime } from '../utils/componentLifetimeEventListener'
+import IconButton from './IconButton.vue'
+import PauseIcon from '@iconify-vue/ic/round-pause'
+import CancelIcon from '@iconify-vue/ic/round-cancel'
+import PlayArrowIcon from '@iconify-vue/ic/round-play-arrow'
+import DetailsIcon from '@iconify-vue/ic/round-info'
+
 const { countdown, detailsName } = defineProps<{ countdown: Countdown; detailsName: string }>()
 
 const displayText = ref('')
-const details = useTemplateRef('details')
-const ctx = Context.withCancel<"unmounted">()
+const dialog = useTemplateRef('dialog')
+const ctx = Context.withCancel<'unmounted'>()
 
 function update() {
   if (!countdown.expiryTimestamp) {
@@ -64,101 +70,188 @@ const onRequestTogglePause = async () => {
   }
 }
 
-const handlerTargetOutisdeDetails = (e: Event) => {
-  if ((e.target instanceof Node && details.value?.contains(e.target)) || details.value === null) {
-    return
-  }
-  details.value.open = false
-}
-
-const handlers = [
-  ['pointerdown', handlerTargetOutisdeDetails],
-  ['focusin', handlerTargetOutisdeDetails],
-] as const
-const onDetailsToggle = (e: ToggleEvent) => {
-  if (e.oldState === 'closed') {
-    for (const [type, handler] of handlers) {
-      addEventListener(type, handler)
-    }
-    if (details.value) details.value.open = true
-  } else {
-    for (const [type, handler] of handlers) {
-      removeEventListener(type, handler)
-    }
-    if (details.value) details.value.open = false
-  }
-}
-
 update()
 
 onUnmounted(() => {
-  ctx.abort("unmounted")
-  for (const [type, handler] of handlers) {
-    removeEventListener(type, handler)
-  }
+  ctx.abort('unmounted')
 })
 
 defineExpose({ update })
 </script>
 
 <template>
-  <div style="display: flex; align-items: center" class="main">
+  <div
+    style="
+      display: flex;
+      border: var(--border-width) var(--border-style) var(--color-text-tertiary);
+      border-radius: 1em;
+      overflow: hidden;
+      font-size: var(--font-size-big);
+      background-color: var(--color-prim-secondary);
+      user-select: none;
+      display: flex;
+      flex-direction: column;
+      align-items: start;
+      justify-content: center;
+      min-width: 13em;
+    "
+  >
     <div
-      :class="[
-        ...(countdown.isExpired ? ['expired'] : countdown.pausedAtTime ? ['paused'] : []),
-        'timer',
-      ]"
+      style="
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 0.4em var(--box-padding-h) 0 var(--box-padding-h);
+        justify-content: space-between;
+        width: 100%;
+        box-sizing: border-box;
+      "
     >
-      {{ displayText }}
-    </div>
-    <button @click="onRequestRemove" :disabled="removing">Remove</button>
-    <button @click="onRequestTogglePause" v-if="!countdown.isExpired">
-      {{ countdown.pausedAtTime ? 'Continue' : 'Pause' }}
-    </button>
-    <details style="display: inline" ref="details" :name="detailsName" @toggle="onDetailsToggle">
-      <summary style="cursor: pointer"><span style="user-select: none">Show details</span></summary>
-      <div style="position: relative" ref="details-content">
+      <div style="display: flex; align-items: center; width: 100%">
+        <div style="flex: 1"></div>
         <div
+          v-if="countdown.name !== undefined"
           style="
-            position: absolute;
-            left: 0.3em;
-            top: 0.2em;
-            background-color: var(--color-secondary);
-            border-radius: var(--border-radius-smaller);
-            padding: var(--box-padding);
-            width: max-content;
+            font-size: var(--font-size-small);
+            font-weight: bold;
+            color: var(--color-text-secondary);
           "
         >
-          <div v-if="countdown.name">Name: {{ countdown.name }}</div>
-          <div>Started at {{ countdown.startedAt.toLocaleTimeString() }}</div>
-          <div v-if="!countdown.pausedAtTime">
-            Expiry at {{ countdown.expiryTimestamp.toLocaleTimeString() }}
-          </div>
+          {{ countdown.name }}
+        </div>
+        <div
+          style="flex: 1; display: flex; align-items: start; justify-content: end"
+          :style="{ height: countdown.name === undefined ? 0 : undefined }"
+        >
+          <IconButton
+            :Icon="DetailsIcon"
+            @click="dialog?.showModal()"
+            title="Show details"
+            color="var(--color-text-secondary)"
+            style="width: 1em; height: 1em"
+            :style="{ position: countdown.name === undefined ? 'absolute' : 'relative' }"
+          ></IconButton>
+        </div>
+      </div>
+      <div style="width: 100%; display: flex">
+        <div style="flex: 1; display: flex; flex-direction: column; justify-content: center">
           <div
+            style="
+              width: max-content;
+              font-size: var(--font-size-tiny);
+              color: var(--color-text-tertiary);
+              font-weight: bold;
+              margin-right: 1em;
+            "
+          >
+            Time left:
+          </div>
+        </div>
+        <div style="font-size: var(--font-size-bigger)">{{ displayText }}</div>
+        <div style="flex: 1"></div>
+      </div>
+    </div>
+    <hr
+      style="color: black; width: 100%; box-sizing: border-box; margin-top: 0.2em; margin-bottom: 0"
+    />
+    <div
+      style="
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 0.1em var(--box-padding-h);
+      "
+      :class="{
+        expired: countdown.isExpired,
+        paused: countdown.pausedAtTime,
+        timer: 1,
+      }"
+    >
+      <div style="flex: 1; display: flex; justify-content: end; align-items: center">
+        <IconButton
+          :Icon="CancelIcon"
+          @click="onRequestRemove"
+          title="Remove"
+          :disabled="removing"
+          style="width: 1em; height: 1em"
+        ></IconButton>
+      </div>
+      <div :style="{ visibility: countdown.isExpired ? 'hidden' : 'visible' }">
+        <IconButton
+          v-if="countdown.pausedAtTime"
+          :Icon="PlayArrowIcon"
+          @click="onRequestTogglePause"
+          title="Continue"
+          style="width: 2em; height: 2em"
+        ></IconButton>
+        <IconButton
+          v-else
+          :Icon="PauseIcon"
+          @click="onRequestTogglePause"
+          title="Pause"
+          style="width: 2em; height: 2em"
+        ></IconButton>
+      </div>
+      <div style="flex: 1; display: flex; justify-content: start; align-items: center"></div>
+    </div>
+    <dialog
+      popover
+      closedby="any"
+      ref="dialog"
+      style="
+        background-color: var(--color-secondary);
+        padding: 0.4em 0.8em;
+        border-style: none;
+        border-radius: var(--border-radius-smaller);
+        box-shadow: 0px 0px 3px 0px var(--color-primary);
+        color: var(--color-text);
+      "
+    >
+      <table
+        style="
+          background-color: var(--color-secondary);
+          border-radius: var(--border-radius-smaller);
+          width: max-content;
+          font-size: var(--font-size-normal);
+          margin-bottom: 1em;
+        "
+      >
+        <tbody>
+          <tr v-if="countdown.name">
+            <td>Name:</td>
+            <td>{{ countdown.name }}</td>
+          </tr>
+          <tr>
+            <td>Started at:</td>
+            <td>{{ countdown.startedAt.toLocaleTimeString() }}</td>
+          </tr>
+          <tr v-if="!countdown.pausedAtTime">
+            <td>Expiry at:</td>
+            <td>{{ countdown.expiryTimestamp.toLocaleTimeString() }}</td>
+          </tr>
+          <tr
             v-if="
               countdown.pausedAtTime ||
               countdown.originalExpiryTimestamp.getTime() !== countdown.expiryTimestamp.getTime()
             "
           >
-            Initial expiry at
-            {{ countdown.originalExpiryTimestamp.toLocaleTimeString() }}
-          </div>
-        </div>
+            <td>Initial expiry at:</td>
+            <td>{{ countdown.originalExpiryTimestamp.toLocaleTimeString() }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="display: flex; justify-content: center">
+        <button @click="dialog?.close()" autofocus>Ok</button>
       </div>
-    </details>
+    </dialog>
   </div>
 </template>
 
 <style lang="css" scoped>
-div.main > * + * {
-  margin-left: 0.2em;
-}
 .timer {
-  font-size: var(--font-size-big);
   background-color: var(--color-secondary);
-  border-radius: var(--border-radius-smaller);
-  padding: var(--box-padding);
-  user-select: none;
 }
 
 .timer.expired {
@@ -167,5 +260,16 @@ div.main > * + * {
 
 .timer.paused {
   background-color: var(--color-timer-paused);
+}
+
+td:first-child {
+  user-select: none;
+  text-align: right;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+  font-weight: bold;
+}
+td:last-child {
+  user-select: contain;
 }
 </style>

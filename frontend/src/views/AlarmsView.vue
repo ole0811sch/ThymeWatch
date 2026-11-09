@@ -90,7 +90,9 @@ onUnmounted(() => {
       </div>
     </div>
     <div style="flex: 1"></div>
-    <div style="display: flex; flex-direction: column; justify-content: center">
+    <div
+      style="display: flex; flex-direction: column; align-items: center; justify-content: center"
+    >
       <CountdownList ref="list" style="height: fit-content" />
     </div>
     <div style="flex: 2"></div>
