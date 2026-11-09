@@ -59,11 +59,12 @@ onUnmounted(() => {
     class="page-container"
     style="
       width: 100%;
+      padding-bottom: 0;
       box-sizing: border-box;
-      flex: 1;
       display: flex;
       flex-direction: column;
-      align-items: center;
+      flex: 1;
+      min-height: 0;
     "
   >
     <div style="display: flex; align-items: center; margin-bottom: 2em; width: 100%">
@@ -89,13 +90,17 @@ onUnmounted(() => {
         <IconButton :Icon="RoundSettings" @click="$router.push(paths.settings)" />
       </div>
     </div>
-    <div style="flex: 1"></div>
     <div
-      style="display: flex; flex-direction: column; align-items: center; justify-content: center"
+      style="display: flex; flex-direction: column; align-items: center; overflow-y: auto; flex: 1"
     >
-      <CountdownList ref="list" style="height: fit-content" />
+      <div style="flex: 1"></div>
+      <div
+        style="display: flex; flex-direction: column; align-items: center; justify-content: center"
+      >
+        <CountdownList ref="list" style="height: fit-content" />
+      </div>
+      <div style="flex: 2"></div>
     </div>
-    <div style="flex: 2"></div>
   </div>
   <DismissModal v-if="expiredUndismissedAlarms.size > 0"></DismissModal>
 </template>

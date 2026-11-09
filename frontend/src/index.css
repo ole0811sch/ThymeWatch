@@ -13,6 +13,8 @@
   --color-text-tertiary: #777;
   --color-timer-paused: hsl(211, 71%, 81%);
   --color-button-icon: var(--color-text);
+  --color-scroll-bar: #999;
+  --color-scroll-bar-hover: #555;
 
   --font-size-tiny: 0.6rem;
   --font-size-smaller: 0.7rem;
@@ -63,6 +65,8 @@
     --color-text-secondary: #bbb;
     --color-text-tertiary: #999;
     --color-timer-paused: hsl(211, 71%, 19%);
+    --color-scroll-bar: #777;
+    --color-scroll-bar-hover: #bbb;
   }
 }
 
@@ -132,4 +136,21 @@ button:focus:not(:active):not(.no-additional-focus-indicator) {
   animation-delay: 50ms;
   animation-duration: 0ms;
   animation-fill-mode: forwards;
+}
+
+::-webkit-scrollbar {
+  width: 0.4rem;
+}
+
+::-webkit-scrollbar-track {
+  border: none;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-scroll-bar);
+  border-radius: 50vmin;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scroll-bar-hover);
 }

@@ -120,7 +120,7 @@ defineExpose({ update })
           {{ countdown.name }}
         </div>
         <div
-          style="flex: 1; display: flex; align-items: start; justify-content: end"
+          style="flex: 1; display: flex; align-items: start; justify-content: end; position: relative"
           :style="{ height: countdown.name === undefined ? 0 : undefined }"
         >
           <IconButton
@@ -152,7 +152,13 @@ defineExpose({ update })
       </div>
     </div>
     <hr
-      style="color: black; width: 100%; box-sizing: border-box; margin-top: 0.2em; margin-bottom: 0"
+      style="
+        border: var(--border-width) var(--border-style) var(--color-text-tertiary);
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 0.2em;
+        margin-bottom: 0;
+      "
     />
     <div
       style="

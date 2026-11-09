@@ -40,38 +40,40 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div
-    style="
-      display: flex;
-      align-items: center;
-      background-color: var(--color-contrast-intensish);
-      width: 100%;
-      padding: var(--box-padding);
-      box-sizing: border-box;
-      border-bottom-width: 0.05em;
-      border-bottom-style: solid;
-    "
-    v-if="doShowDisconnectedBar"
-  >
-    <span style="margin-right: 0.5em"> The connection to the server was lost. </span>
-    <button
-      :style="{
-        display: 'inline',
-        ...(hideShowReconnectBtn && {
-          visibility: 'hidden',
-          width: 0,
-          paddingLeft: 0,
-          paddingRight: 0,
-          marginLeft: 0,
-          marginRight: 0,
-        }),
-      }"
-      @click="onClickRetry"
+  <div style="height: 100vh; display: flex; flex-direction: column; width: 100%">
+    <div
+      style="
+        display: flex;
+        align-items: center;
+        background-color: var(--color-contrast-intensish);
+        width: 100%;
+        padding: var(--box-padding);
+        box-sizing: border-box;
+        border-bottom-width: 0.05em;
+        border-bottom-style: solid;
+      "
+      v-if="doShowDisconnectedBar"
     >
-      Reconnect
-    </button>
-    <span v-if="hideShowReconnectBtn">Reconnecting...</span>
-    <span style="flex: 1"></span>
+      <span style="margin-right: 0.5em"> The connection to the server was lost. </span>
+      <button
+        :style="{
+          display: 'inline',
+          ...(hideShowReconnectBtn && {
+            visibility: 'hidden',
+            width: 0,
+            paddingLeft: 0,
+            paddingRight: 0,
+            marginLeft: 0,
+            marginRight: 0,
+          }),
+        }"
+        @click="onClickRetry"
+      >
+        Reconnect
+      </button>
+      <span v-if="hideShowReconnectBtn">Reconnecting...</span>
+      <span style="flex: 1"></span>
+    </div>
+    <RouterView></RouterView>
   </div>
-  <RouterView></RouterView>
 </template>
