@@ -89,6 +89,7 @@ button:active {
 button:disabled {
   background-color: var(--button-bg-color-disabled);
   color: var(--color-text-tertiary);
+  cursor: unset;
 }
 
 input {
