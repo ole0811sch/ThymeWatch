@@ -13,6 +13,7 @@
   --color-text-tertiary: #777;
   --color-timer-paused: hsl(211, 71%, 81%);
   --color-button-icon: var(--color-text);
+  --color-button-icon-disabled: var(--color-text-tertiary);
   --color-scroll-bar: #999;
   --color-scroll-bar-hover: #555;
 

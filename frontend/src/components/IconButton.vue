@@ -6,6 +6,7 @@ const props = defineProps<{
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   Icon: DefineSetupFnComponent<IconProps, {}, {}, IconProps & {}, PublicProps>
   color?: string
+  disabledColor?: string
   disabled?: boolean
 }>()
 
@@ -19,7 +20,7 @@ const emit = defineEmits<{ click: [] }>()
         width: '100%',
         height: '100%',
         padding: '15%',
-        color: props.color ?? 'var(--color-button-icon)',
+        color: props.disabled ? (props.disabledColor ?? 'var(--color-button-icon-disabled)') : (props.color ?? 'var(--color-button-icon)'),
       }"
     />
   </button>
