@@ -9,6 +9,7 @@ import PauseIcon from '@iconify-vue/ic/round-pause'
 import CancelIcon from '@iconify-vue/ic/round-cancel'
 import PlayArrowIcon from '@iconify-vue/ic/round-play-arrow'
 import DetailsIcon from '@iconify-vue/ic/round-info'
+import ReplayIcon from '@iconify-vue/ic/round-replay'
 
 const { countdown, detailsName } = defineProps<{ countdown: Countdown; detailsName: string }>()
 
@@ -41,6 +42,7 @@ addEventListenerWithLifetime(
 
 const removing = ref(false)
 const togglingPause = ref(false)
+const restarting = ref(false)
 
 const onRequestRemove = async () => {
   removing.value = true
@@ -67,6 +69,23 @@ const onRequestTogglePause = async () => {
     ctx2.cancel()
   } finally {
     togglingPause.value = false
+  }
+}
+
+const onRequestRestart = async () => {
+  restarting.value = true
+  try {
+    const ctx2 = Context.withTimeout(5000, ctx)
+    const res = await Connection.getInstance().restartAlarm(ctx2, countdown.id)
+    ctx2.cancel()
+    if (res instanceof Error) {
+      alert(res.message)
+    }
+    if (res === undefined) {
+      setTimeout(update, 100)
+    }
+  } finally {
+    restarting.value = false
   }
 }
 
@@ -120,7 +139,13 @@ defineExpose({ update })
           {{ countdown.name }}
         </div>
         <div
-          style="flex: 1; display: flex; align-items: start; justify-content: end; position: relative"
+          style="
+            flex: 1;
+            display: flex;
+            align-items: start;
+            justify-content: end;
+            position: relative;
+          "
           :style="{ height: countdown.name === undefined ? 0 : undefined }"
         >
           <IconButton
@@ -184,9 +209,16 @@ defineExpose({ update })
           style="width: 1em; height: 1em"
         ></IconButton>
       </div>
-      <div :style="{ visibility: countdown.isExpired ? 'hidden' : 'visible' }">
+      <div>
         <IconButton
-          v-if="countdown.pausedAtTime"
+          v-if="countdown.isExpired"
+          :Icon="ReplayIcon"
+          @click="onRequestRestart"
+          title="Restart"
+          style="width: 2em; height: 2em"
+        ></IconButton>
+        <IconButton
+          v-else-if="countdown.pausedAtTime"
           :Icon="PlayArrowIcon"
           @click="onRequestTogglePause"
           title="Continue"
@@ -200,7 +232,15 @@ defineExpose({ update })
           style="width: 2em; height: 2em"
         ></IconButton>
       </div>
-      <div style="flex: 1; display: flex; justify-content: start; align-items: center"></div>
+      <div style="flex: 1; display: flex; justify-content: start; align-items: center">
+        <IconButton
+          v-if="!countdown.isExpired"
+          :Icon="ReplayIcon"
+          @click="onRequestRestart"
+          title="Restart"
+          style="width: 1em; height: 1em"
+        ></IconButton>
+      </div>
     </div>
     <dialog
       popover

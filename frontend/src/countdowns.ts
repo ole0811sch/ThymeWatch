@@ -6,17 +6,24 @@ export interface Countdown {
   originalExpiryTimestamp: Date
   name?: string
   id: number
+  originalId: number
   pausedAtTime: Date | null
   isExpired: boolean
   isDismissed: boolean
 }
 
 export const countdowns: Ref<Map<number, Countdown>> = ref(new Map())
+export const countdownsByOrigId: Ref<Map<number, Countdown>> = ref(new Map())
 export const expiredUndismissedAlarms = ref(new Set<number>())
 
-export function addCountdown(cd: Countdown): Countdown {
+export function addCountdown(cd: Countdown, replacingId?: number): Countdown {
+  if (replacingId !== undefined) {
+    dismissCountdown(replacingId)
+    countdowns.value.delete(replacingId)
+  }
   const cdFull: Countdown = { ...cd }
   countdowns.value.set(cdFull.id, cdFull)
+  countdownsByOrigId.value.set(cdFull.originalId, cdFull)
   handler('new', cdFull)
   if (cdFull.isExpired && !cdFull.isDismissed) {
     expiredUndismissedAlarms.value.add(cd.id)
@@ -38,6 +45,7 @@ export function removeCountdown(id: number): void {
   }
 
   countdowns.value.delete(id)
+  countdownsByOrigId.value.delete(cd.originalId)
   handler('removed', cd)
   for (const type of countdownEventTypes) {
     handlers[type].delete(id)
@@ -47,6 +55,7 @@ export function removeCountdown(id: number): void {
 export function removeAllCountdown(): void {
   const cpy = new Map(countdowns.value)
   countdowns.value.clear()
+  countdownsByOrigId.value.clear()
   for (const cd of cpy.values()) {
     handler('removed', cd)
   }

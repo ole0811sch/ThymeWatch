@@ -51,3 +51,17 @@ func (opt Optional[T]) Map[U any](fn func(T) U) Optional[U] {
 	}
 	return Optional[U]{}
 }
+
+func (opt Optional[T]) Unwrap() T {
+	if opt.present {
+		return opt.value
+	}
+	panic("Tried to unwrap empty optional")
+}
+
+func (opt Optional[T]) UnwrapOr(alternative T) T {
+	if opt.present {
+		return opt.value
+	}
+	return alternative
+}

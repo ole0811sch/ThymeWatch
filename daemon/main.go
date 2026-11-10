@@ -141,6 +141,16 @@ func ParsePauseAlarmMessage(bytes []byte) (PauseAlarmMessage, error) {
 	return message, err
 }
 
+type RestartAlarmMessage struct {
+	Id float64 `json:"id"`
+}
+
+func ParseRestartAlarmMessage(bytes []byte) (RestartAlarmMessage, error) {
+	var message RestartAlarmMessage
+	err := json.Unmarshal(bytes, &message)
+	return message, err
+}
+
 type ContinueAlarmMessage struct {
 	Id float64 `json:"id"`
 }
@@ -151,9 +161,14 @@ func ParseContinueAlarmMessage(bytes []byte) (ContinueAlarmMessage, error) {
 	return message, err
 }
 
+type SingleAlarmNotification struct {
+	Alarm       StoredAlarm       `json:"alarm"`
+	ReplacingId Optional[float64] `json:"replacingId"`
+}
+
 type NotifyAlarmMessage struct {
-	Alarms  []*StoredAlarm `json:"alarms"`
-	Ketchup bool           `json:"ketchup"`
+	Alarms  []*SingleAlarmNotification `json:"alarms"`
+	Ketchup bool                       `json:"ketchup"`
 }
 
 type AlarmCanceledMessage struct {
@@ -179,8 +194,11 @@ type AlarmContinuedMessage struct {
 }
 
 type StoredAlarm struct {
-	Spec               AlarmSpecification  `json:"spec"`
-	Id                 float64             `json:"id"`
+	Spec AlarmSpecification `json:"spec"`
+	Id   float64            `json:"id"`
+	// If this alarm is the product of replacing an alarm, the replaced alarms
+	// originalId. Otherwise equal to Id.
+	OriginalId         float64             `json:"originalId"`
 	OriginalExpiryTime time.Time           `json:"originalExpiryTime"`
 	PausedAtTime       Optional[time.Time] `json:"pausedAtTime"`
 	IsExpired          bool                `json:"isExpired"`
@@ -205,11 +223,16 @@ var HandleCreateAlarm = func(hd *MyHandlerData, ctx context.Context, req []byte,
 	if err != nil {
 		return ProtocolErrorFromErr(err)
 	}
-	alarmId, err := hd.hub.UserData.newAlarm(ctx, &AlarmSpecification{
-		ExpiryTime: message.ExpiryTime,
-		Name:       message.Name,
-		StartedAt:  message.StartedAt,
-	})
+	specFun := func(value *UserDataContent) (
+		*AlarmSpecification, Optional[lo.Tuple2[float64, float64]], error,
+	) {
+		return &AlarmSpecification{
+			ExpiryTime: message.ExpiryTime,
+			Name:       message.Name,
+			StartedAt:  message.StartedAt,
+		}, Optional[lo.Tuple2[float64, float64]]{}, nil
+	}
+	alarmId, err := hd.hub.UserData.newAlarm(ctx, specFun)
 	if err != nil {
 		return err
 	}
@@ -312,6 +335,54 @@ var HandleContinueAlarm MyHandlerFunc = func(hd *HandlerData[UserData], ctx cont
 	return nil
 }
 
+type AlarmInexistentError struct{}
+
+func (aie AlarmInexistentError) Error() string {
+	return "The specified alarm doesn't exist"
+}
+
+var HandleRestart MyHandlerFunc = func(hd *HandlerData[UserData], ctx context.Context, req []byte, responder Responder) error {
+	message, err := ParseRestartAlarmMessage(req)
+	if err != nil {
+		return ProtocolErrorFromErr(err)
+	}
+	ctxlog.Printf(ctx, "Restarting alarm with id %v", message.Id)
+	alarmId, err := hd.hub.UserData.newAlarm(ctx,
+		func(value *UserDataContent) (
+			spec *AlarmSpecification,
+			replacingIdAndOriginalId Optional[lo.Tuple2[float64, float64]],
+			retErr error,
+		) {
+			alarm, ok := value.alarms[message.Id]
+			if !ok {
+				retErr = AlarmInexistentError{}
+				return
+			}
+			now := time.Now()
+			alarmDuration := alarm.OriginalExpiryTime.Sub(alarm.Spec.StartedAt)
+			spec = &AlarmSpecification{
+				ExpiryTime: now.Add(alarmDuration),
+				Name:       alarm.Spec.Name,
+				StartedAt:  now,
+			}
+			ctxlog.Printf(ctx, "Setting alarm for %v", spec.ExpiryTime)
+			replacingIdAndOriginalId = Some(lo.T2(message.Id, alarm.OriginalId))
+			return
+		})
+	if err, ok := err.(*SpecFunError); ok {
+		if _, ok := err.Unwrap().(AlarmInexistentError); ok {
+			ctxlog.Printf(ctx, "Could not restart alarm: Invalid id")
+			responder(ctx, StatusMessage{404})
+		}
+	}
+	if err != nil {
+		return err
+	}
+	ctx = ctxlog.WithAlarmId(ctx, alarmId)
+	responder(ctx, StatusMessage{200})
+	return nil
+}
+
 func registerHandlers(ctx context.Context, hub *MyHub) error {
 	hub.RegisterHandler(ctx, "CREATE_ALARM", HandleCreateAlarm)
 	hub.RegisterHandler(ctx, "SUBSCRIBE", HandleSubscribe)
@@ -320,6 +391,7 @@ func registerHandlers(ctx context.Context, hub *MyHub) error {
 	hub.RegisterHandler(ctx, "PAUSE_ALARM", HandlePauseAlarm)
 	hub.RegisterHandler(ctx, "CONTINUE_ALARM", HandleContinueAlarm)
 	hub.RegisterHandler(ctx, "KILL", HandleKill)
+	hub.RegisterHandler(ctx, "RESTART_ALARM", HandleRestart)
 	return ctx.Err()
 }
 
@@ -364,7 +436,7 @@ func SendAndWaitFor200(ctx context.Context, info *MyClientInfo, tag string, body
 	return ret
 }
 
-func SendAlarmsToClient(ctx context.Context, info *MyClientInfo, alarms []*StoredAlarm, ketchup bool) error {
+func SendAlarmsToClient(ctx context.Context, info *MyClientInfo, alarms []*SingleAlarmNotification, ketchup bool) error {
 	return SendAndWaitFor200(ctx, info, "NOTIFY_ALARM", NotifyAlarmMessage{alarms, ketchup})
 }
 
@@ -439,7 +511,25 @@ func (ud *UserData) stopAlarm(alarm *StoredAlarm) {
 	alarm.cancel = nil
 }
 
-func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (float64, error) {
+type SpecFunError struct{ err error }
+
+func (sfe *SpecFunError) Error() string {
+	return fmt.Sprintf("Cannot set new alarm: %v", sfe.err)
+}
+
+func (sfe *SpecFunError) Unwrap() error {
+	return sfe.err
+}
+
+// specFun is called with the data stored in ud while the lock is held. If it
+// returns an error, newAlarm returns a SpecFunError wrapping that error.
+// specFun should return the specification of the alarm to create and optional
+// the id and originalId of the alarm being replaced
+func (ud *UserData) newAlarm(ctx context.Context,
+	specFun func(value *UserDataContent) (
+		spec *AlarmSpecification, replacingIdAndOriginalId Optional[lo.Tuple2[float64, float64]], err error,
+	),
+) (float64, error) {
 	if maContext == nil {
 		go func() {
 			err := InitAudio()
@@ -460,15 +550,29 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (flo
 		}()
 	}
 	id, err1, err2 := ud.lb.WriteReturning2(ctx, func(value *UserDataContent) (float64, error) {
+		spec, replOrigId, err := specFun(value)
+		if err != nil {
+			return 0, &SpecFunError{err}
+		}
+		origId := value.alarmId
+		if replOrigId.present {
+			// don't notify yet if we're replacing it
+			err := value.cancelAlarm(ctx, replOrigId.value.A, ud, false)
+			if err != nil {
+				return 0, fmt.Errorf("Could not cancel old alarm being replaced: %w", err)
+			}
+			origId = replOrigId.value.B
+		}
 		newStoredAlarm := &StoredAlarm{
 			Spec:               *spec,
 			Id:                 value.alarmId,
+			OriginalId:         origId,
 			OriginalExpiryTime: spec.ExpiryTime,
 			PausedAtTime:       Optional[time.Time]{},
 			IsExpired:          false,
 			IsDismissed:        false,
 		}
-		err := insertAlarm(ctx, ud.db, newStoredAlarm)
+		err = insertAlarm(ctx, ud.db, newStoredAlarm)
 		if err != nil {
 			return 0, err
 		}
@@ -476,7 +580,11 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (flo
 		value.alarmId++
 		ctx = ctxlog.WithAlarmId(ctx, newStoredAlarm.Id)
 		ud.startAlarm(newStoredAlarm)
-		newStoredAlarmClone := newStoredAlarm.ClonePtr()
+		replacingId := replOrigId.Map(func(t lo.Tuple2[float64, float64]) float64 { return t.A })
+		alarmNotif := &SingleAlarmNotification{
+			Alarm:       *newStoredAlarm.ClonePtr(),
+			ReplacingId: replacingId,
+		}
 		wg := sync.WaitGroup{}
 		for info := range value.subscribers {
 			wg.Go(func() {
@@ -485,7 +593,7 @@ func (ud *UserData) newAlarm(ctx context.Context, spec *AlarmSpecification) (flo
 					"NotifyNewAlarm",
 					func(ctx context.Context, info *ClientInfo[UserData]) error {
 						ctxPerSub, cancelPerSub := DerivedFromTwoContexts(ctx, info.ctx)
-						err := SendAlarmsToClient(ctxPerSub, info, []*StoredAlarm{newStoredAlarmClone}, false)
+						err := SendAlarmsToClient(ctxPerSub, info, []*SingleAlarmNotification{alarmNotif}, false)
 						cancelPerSub()
 						return err
 					},
@@ -505,15 +613,20 @@ func (ud *UserData) registerSubscriber(ctx context.Context, client *MyClientInfo
 	err, err2 := ud.lb.WriteReturning(ctx, func(value *UserDataContent) error {
 		value.subscribers[client] = true
 		slice := lo.Map(slices.Collect(maps.Values(value.alarms)),
-			Ignoring2ndArg[int]((*StoredAlarm).ClonePtr))
+			func(v *StoredAlarm, _ int) *SingleAlarmNotification {
+				return &SingleAlarmNotification{
+					Alarm:       *v.ClonePtr(),
+					ReplacingId: Optional[float64]{},
+				}
+			})
 		err := client.ScheduleTask(ctx,
 			"AllAlarmsForNewSubscriber",
 			func(ctx context.Context, info *ClientInfo[UserData]) error {
-				slices.SortFunc(slice, func(a *StoredAlarm, b *StoredAlarm) int {
-					if a.Spec.StartedAt.Before(b.Spec.StartedAt) {
+				slices.SortFunc(slice, func(a *SingleAlarmNotification, b *SingleAlarmNotification) int {
+					if a.Alarm.Spec.StartedAt.Before(b.Alarm.Spec.StartedAt) {
 						return -1
 					}
-					if a.Spec.StartedAt.Equal(b.Spec.StartedAt) {
+					if a.Alarm.Spec.StartedAt.Equal(b.Alarm.Spec.StartedAt) {
 						return 0
 					}
 					return 1
@@ -786,25 +899,28 @@ func (ud *UserData) continueAlarm(ctx context.Context, continueId float64) error
 	return err
 }
 
-func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) error {
-	err, err2 := ud.lb.WriteReturning(ctx, func(udc *UserDataContent) error {
-		alarm, ok := udc.alarms[cancelId]
-		if !ok {
-			return nil
-		}
-		err := deleteAlarm(ctx, ud.db, cancelId)
-		if err != nil {
-			return err
-		}
-		delete(udc.alarms, cancelId)
-		if alarm.closeNotification != nil {
-			alarm.closeNotification()
-			alarm.closeNotification = nil
-		}
-		err = ud.sharedAlarmSound.Stop(ctx)
-		if err != nil {
-			ctxlog.Printf(ctx, "Could not stop alarm sound: %v\n", err)
-		}
+func (udc *UserDataContent) cancelAlarm(ctx context.Context, cancelId float64, userData *UserData, notifyClients bool) error {
+	alarm, ok := udc.alarms[cancelId]
+	if !ok {
+		return nil
+	}
+	err := deleteAlarm(ctx, userData.db, cancelId)
+	if err != nil {
+		return err
+	}
+	if alarm.cancel != nil {
+		alarm.cancel()
+	}
+	delete(udc.alarms, cancelId)
+	if alarm.closeNotification != nil {
+		alarm.closeNotification()
+		alarm.closeNotification = nil
+	}
+	err = userData.sharedAlarmSound.Stop(ctx)
+	if err != nil {
+		ctxlog.Printf(ctx, "Could not stop alarm sound: %v\n", err)
+	}
+	if notifyClients {
 		wg := sync.WaitGroup{}
 		for info := range udc.subscribers {
 			wg.Go(func() {
@@ -822,7 +938,13 @@ func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) error {
 			})
 		}
 		wg.Wait()
-		return nil
+	}
+	return nil
+}
+
+func (ud *UserData) cancelAlarm(ctx context.Context, cancelId float64) error {
+	err, err2 := ud.lb.WriteReturning(ctx, func(udc *UserDataContent) error {
+		return udc.cancelAlarm(ctx, cancelId, ud, true)
 	})
 	if err2 != nil {
 		return err2

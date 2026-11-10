@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watchSyncEffect, type Ref } from 'vue'
 import TheCountdown from '../components/TheCountdown.vue'
-import { countdownEventTarget, countdowns, type Countdown } from '../countdowns.ts'
+import { countdownEventTarget, countdownsByOrigId, type Countdown } from '../countdowns.ts'
 import { addEventListenerWithLifetime } from '../utils/componentLifetimeEventListener.ts'
 
 const emit = defineEmits<{ expired: [Countdown] }>()
@@ -86,12 +86,12 @@ onBeforeUnmount(() => {
     <TheCountdown
       :details-name="detailsName"
       :countdown
-      v-for="[id, countdown] in countdowns"
-      :key="id"
+      v-for="[origId, countdown] in countdownsByOrigId"
+      :key="origId"
       :ref="
         (cd) => {
-          if (cd === null) countdownEls.delete(id)
-          else countdownEls.set(id, cd as any)
+          if (cd === null) countdownEls.delete(countdown.id)
+          else countdownEls.set(countdown.id, cd as any)
         }
       "
       style="margin: 0.5em 0.2em"

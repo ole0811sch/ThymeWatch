@@ -38,25 +38,31 @@ conn.addEventListener('ketchup', () => void removeAllCountdown())
 conn.addEventListener(
   'setalarm',
   ({
+    replacingId,
     expiryTime,
     name,
     id,
+    originalId,
     startedAt,
     originalExpiryTime,
     pausedAtTime,
     isExpired,
     isDismissed,
   }) => {
-    addCountdown({
-      expiryTimestamp: expiryTime,
-      startedAt,
-      name,
-      id,
-      originalExpiryTimestamp: originalExpiryTime,
-      pausedAtTime,
-      isExpired: isExpired,
-      isDismissed: isDismissed,
-    })
+    addCountdown(
+      {
+        expiryTimestamp: expiryTime,
+        startedAt,
+        name,
+        id,
+        originalId,
+        originalExpiryTimestamp: originalExpiryTime,
+        pausedAtTime,
+        isExpired: isExpired,
+        isDismissed: isDismissed,
+      },
+      replacingId ?? undefined,
+    )
   },
 )
 conn.addEventListener('cancelalarm', (alarmId) => {

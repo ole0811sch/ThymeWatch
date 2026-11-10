@@ -3,6 +3,7 @@ import type { IntersectingUnionIndex } from './utils/types'
 
 export const tags = [
   'CREATE_ALARM',
+  'RESTART_ALARM',
   'CANCEL_ALARM',
   'DISMISS_ALARMS',
   'PAUSE_ALARM',
@@ -60,9 +61,11 @@ export type ConnectionEventMap = {
     code: number
   }
   setalarm: {
+    replacingId: number | null
     expiryTime: Date
     name: string | undefined
     id: number
+    originalId: number
     startedAt: Date
     ketchup: boolean
     pausedAtTime: Date | null
@@ -81,6 +84,110 @@ export type ConnectionEventMap = {
   alarmcontinued: {
     newExpiryTimestamp: Date
     id: number
+  }
+}
+
+function extractOptionalValue<T extends object, R>(
+  v: T,
+  attr: string,
+  pred: (u: unknown) => u is R,
+): [value: R | undefined | null, ok: boolean] {
+  if (!(attr in v)) {
+    return [undefined, true]
+  }
+  const field: unknown = v[attr as keyof typeof v]
+  if (field === null || field === undefined || pred(field)) {
+    return [field, true]
+  }
+  return [undefined, false]
+}
+
+function verifyNotifyAlarmMessage(
+  notif: unknown,
+  ketchup: boolean,
+): ConnectionEventMap['setalarm'] | undefined {
+  if (notif === null || typeof notif !== 'object') {
+    return
+  }
+  const [replacingId, replacingIdOk] = extractOptionalValue(
+    notif,
+    'replacingId',
+    (u) => typeof u === 'number',
+  )
+  if (!replacingIdOk) {
+    return
+  }
+  if (!('alarm' in notif) || notif.alarm === null || typeof notif.alarm !== 'object') {
+    return
+  }
+  const alarm = notif.alarm
+  if (
+    !(
+      'id' in alarm &&
+      'originalId' in alarm &&
+      'spec' in alarm &&
+      'isExpired' in alarm &&
+      'isDismissed' in alarm &&
+      'spec' in alarm &&
+      'originalExpiryTime' in alarm
+    ) ||
+    typeof alarm.id !== 'number' ||
+    typeof alarm.originalId !== 'number' ||
+    typeof alarm.spec !== 'object' ||
+    typeof alarm.isExpired !== 'boolean' ||
+    typeof alarm.isDismissed !== 'boolean' ||
+    alarm.spec === null ||
+    typeof alarm.spec !== 'object' ||
+    typeof alarm.originalExpiryTime !== 'string'
+  ) {
+    return
+  }
+
+  const [pausedAtTimeStr, pausedAtTimeStrOk] = extractOptionalValue(
+    alarm,
+    'pausedAtTime',
+    (u) => typeof u === 'string',
+  )
+  if (!pausedAtTimeStrOk) {
+    return
+  }
+  const spec = alarm.spec
+  const [name, nameStrOk] = extractOptionalValue(alarm, 'name', (u) => typeof u === 'string')
+  if (!nameStrOk) {
+    return
+  }
+  if (
+    !('expiryTime' in spec && 'startedAt' in spec) ||
+    typeof spec.expiryTime !== 'string' ||
+    typeof spec.startedAt !== 'string'
+  ) {
+    return
+  }
+  const expiryDate = new Date(spec.expiryTime)
+  const startedAt = new Date(spec.startedAt)
+  const originalExpiryTime = new Date(alarm.originalExpiryTime)
+  const pausedAtTime = typeof pausedAtTimeStr === 'string' ? new Date(pausedAtTimeStr) : null
+  if (
+    isNaN(expiryDate.getTime()) ||
+    isNaN(startedAt.getTime()) ||
+    isNaN(originalExpiryTime.getTime()) ||
+    isNaN(pausedAtTime?.getTime() ?? 0)
+  ) {
+    return
+  }
+
+  return {
+    replacingId: replacingId ?? null,
+    expiryTime: expiryDate,
+    name: name ?? undefined,
+    id: alarm.id,
+    originalId: alarm.originalId,
+    startedAt: startedAt,
+    ketchup,
+    isExpired: alarm.isExpired,
+    isDismissed: alarm.isDismissed,
+    originalExpiryTime: originalExpiryTime,
+    pausedAtTime: pausedAtTime,
   }
 }
 
@@ -211,63 +318,24 @@ export class Connection {
     let eventName
     switch (header.tag) {
       case 'NOTIFY_ALARM': {
-        const expiryDates: Date[] = []
-        const originalExpiryTimes: Date[] = []
-        const pausedAtTimes: (Date | null)[] = []
-        const startedAts: Date[] = []
-        if (
-          typeof body.ketchup !== 'boolean' ||
-          !Array.isArray(body.alarms) ||
-          body.alarms.some((alarm) => {
-            if (
-              typeof alarm.id !== 'number' ||
-              typeof alarm.spec !== 'object' ||
-              typeof alarm.isExpired !== 'boolean' ||
-              typeof alarm.isDismissed !== 'boolean' ||
-              (alarm.spec.name !== undefined &&
-                alarm.spec.name !== null &&
-                typeof alarm.spec.name !== 'string') ||
-              typeof alarm.spec.expiryTime !== 'string' ||
-              typeof alarm.spec.startedAt !== 'string'
-            ) {
-              return true
-            }
-            const expiryDate = new Date(alarm.spec.expiryTime)
-            const startedAt = new Date(alarm.spec.startedAt)
-            const originalExpiryTime = new Date(alarm.originalExpiryTime)
-            const pausedAtTime = alarm.pausedAtTime === null ? null : new Date(alarm.pausedAtTime)
-            if (
-              isNaN(expiryDate.getTime()) ||
-              isNaN(startedAt.getTime()) ||
-              isNaN(originalExpiryTime.getTime()) ||
-              isNaN(pausedAtTime?.getTime() ?? 0)
-            ) {
-              return true
-            }
-            expiryDates.push(expiryDate)
-            startedAts.push(startedAt)
-            originalExpiryTimes.push(originalExpiryTime)
-            pausedAtTimes.push(pausedAtTime)
-          })
-        ) {
+        let events
+        if (typeof body.ketchup === 'boolean' && Array.isArray(body.alarms)) {
+          const eventsUnfiltered = body.alarms.map((alarm) =>
+            verifyNotifyAlarmMessage(alarm, !!body.ketchup),
+          )
+          if (eventsUnfiltered.every((event) => event !== undefined)) {
+            events = eventsUnfiltered
+          }
+        }
+        if (events === undefined) {
           console.error('Invalid payload for NOTIFY_ALARM')
           break
         }
         if (body.ketchup) {
           this.emit('ketchup', undefined)
         }
-        for (let i = 0; i < body.alarms.length; ++i) {
-          this.emit('setalarm', {
-            expiryTime: expiryDates[i]!,
-            name: body.alarms[i].spec.name ?? undefined,
-            id: body.alarms[i].id,
-            startedAt: startedAts[i]!,
-            ketchup: body.ketchup,
-            isExpired: body.alarms[i].isExpired,
-            isDismissed: body.alarms[i].isDismissed,
-            originalExpiryTime: originalExpiryTimes[i]!,
-            pausedAtTime: pausedAtTimes[i]!,
-          })
+        for (const event of events) {
+          this.emit('setalarm', event)
         }
         const ctx2 = this.makeMessageContext(ctx)
         await this.sendMessage(ctx2, header.id, { status: 200 })
@@ -373,6 +441,25 @@ export class Connection {
       expiryTime: expiryTime,
       startedAt: startedAt,
     })
+  }
+
+  async restartAlarm<T>(
+    ctx: Context<T>,
+    id: number,
+  ): Promise<undefined | Error | Abort<'timeout' | T>> {
+    const response = await this.asyncSendMessageDefaultTimeout(ctx, 'RESTART_ALARM', { id })
+    if (!Array.isArray(response)) {
+      return response
+    }
+    switch (response[1].status) {
+      case 200:
+        return
+      case 404:
+        return Error("Couldn't restart alarm: Alarm doesn't exist anymore")
+      default:
+        console.error({ status: response[1].status }, 'Unsupported status')
+        return Error('Error while restarting alarm: Server Error')
+    }
   }
 
   async cancelAlarm<T>(
