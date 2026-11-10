@@ -62,9 +62,9 @@ const onRequestTogglePause = async () => {
     const ctx2 = Context.withTimeout(5000, ctx)
     const conn = Connection.getInstance()
     if (countdown.pausedAtTime) {
-      conn.continueAlarm(ctx2, countdown.id)
+      await conn.continueAlarm(ctx2, countdown.id)
     } else {
-      conn.pauseAlarm(ctx2, countdown.id)
+      await conn.pauseAlarm(ctx2, countdown.id)
     }
     ctx2.cancel()
   } finally {
@@ -214,6 +214,7 @@ defineExpose({ update })
           v-if="countdown.isExpired"
           :Icon="ReplayIcon"
           @click="onRequestRestart"
+          :disabled="restarting"
           title="Restart"
           style="width: 2em; height: 2em"
         ></IconButton>
@@ -222,6 +223,7 @@ defineExpose({ update })
           :Icon="PlayArrowIcon"
           @click="onRequestTogglePause"
           title="Continue"
+          :disabled="togglingPause"
           style="width: 2em; height: 2em"
         ></IconButton>
         <IconButton
@@ -229,6 +231,7 @@ defineExpose({ update })
           :Icon="PauseIcon"
           @click="onRequestTogglePause"
           title="Pause"
+          :disabled="togglingPause"
           style="width: 2em; height: 2em"
         ></IconButton>
       </div>
@@ -237,6 +240,7 @@ defineExpose({ update })
           v-if="!countdown.isExpired"
           :Icon="ReplayIcon"
           @click="onRequestRestart"
+          :disabled="restarting"
           title="Restart"
           style="width: 1em; height: 1em"
         ></IconButton>
